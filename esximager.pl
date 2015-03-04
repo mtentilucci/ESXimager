@@ -3,20 +3,23 @@ use strict;
 use Tk;
 use Tk::ProgressBar;
 use Tk::MsgBox;
+use Tk::DirTree;
 #use Tk::Text;
 use Net::OpenSSH;
 use Net::SFTP::Foreign;
 
 ########################
-#ESXimager2.3.pl
+#ESXimager2.4.pl
 #Matt Tentilucci	
-#11-4-2014
+#12-2-2014
 #
 #V2.1 - Adding in user confirmation of VM choices and passing them back to sshToESXi sub, removing lots of misc. lines from debugging/trial and error
 #V2.2 - Redesign user selection of VMs window and switched from grid to pack geometry manager. Instead of having a sub window, 
 # there will be a frame within main window that will be updated with the VM choices for the user to image. This should be a much
 # cleaner look and prevent multiple windows from popping up. Also added configuration file and Tools->Settings menu bar for editing it
-#V2.3 - Added in menu item to open an existing case
+#V2.3 - Added in menu item to open an existing case, variable cleanup, create new case, open case
+#V2.4 - Created dirTreeFrame to show case directory listing to use once a case has been opened -> future, allow user to click on files and get info(size, hash, etc...)
+# moved some boxes around, the connect frame is now horizontial at the top of the window
 ########################
 
 #variable so ssh session to esxi can be accessible outside of sub
@@ -32,8 +35,8 @@ my $currentCaseLocation;
 
 #Creates main window
 my $mw = MainWindow->new;
-$mw->title("ESXimager 2.3");
-#$mw->geometry("600x600");
+$mw->title("ESXimager 2.4");
+$mw->geometry("1400x600");
 
 #Create menu bar
 $mw->configure(-menu => my $menubar = $mw->Menu);
@@ -51,35 +54,46 @@ $tools->command(-label => "Settings", -command => \&editSettings);
 #console window
 my $consoleLog = $mw->Text(-height => 10, -width => 125)->pack(-side => 'bottom', -fill => 'both');
 
-#Creates a label in the top left display the case currently "open"
-my $caseLabel = $mw->Label(-text => "Current Case: $currentCaseName Location: $currentCaseLocation")->pack;#(-side => 'left', -anchor => 'nw');
-
 ##Connection Frame##
 #Create top left frame for holding username, password, server IP, connect button widgets
 my $connectionFrame = $mw->Frame(-borderwidth => 2, -relief => 'groove');
-$connectionFrame->pack(-side => 'left', -anchor => 'nw');
+$connectionFrame->pack;#(-side => 'left', -anchor => 'nw');
 #label for IP
-$connectionFrame->Label(-text => "Server IP")->pack;
+$connectionFrame->Label(-text => "Server IP")->pack(-side => 'left', -anchor => 'n');
 #entry for IP
-my $ESXip = $connectionFrame->Entry( -width => 20, -text => "172.16.150.128")->pack;
+my $ESXip = $connectionFrame->Entry( -width => 20, -text => "192.168.100.142")->pack(-side => 'left', -anchor => 'n');
 #Label for user
-$connectionFrame->Label(-text => "Username")->pack;
+$connectionFrame->Label(-text => "Username")->pack(-side => 'left', -anchor => 'n');
 #entry for user
-my $username = $connectionFrame->Entry( -width => 20,  -text => "root")->pack;
+my $username = $connectionFrame->Entry( -width => 20,  -text => "root")->pack(-side => 'left', -anchor => 'n');
 #label for pass
-$connectionFrame->Label(-text => "Password")->pack;
+$connectionFrame->Label(-text => "Password")->pack(-side => 'left', -anchor => 'n');
 #entry for pass
-my $password = $connectionFrame->Entry( -width => 20, -show => "*",  -text => "Thewayiam10107")->pack;
+my $password = $connectionFrame->Entry( -width => 20, -show => "*",  -text => "netsys01")->pack(-side => 'left', -anchor => 'n');
 #connect button, first calls sub to do input sanitization and checking on ip, username, and password boxes then 
 #either falls out with an error, or another sub is called to connect to the ESXi server
-$connectionFrame->Button(-text => "Connect", -command => \&sanitizeInputs )->pack;	
+$connectionFrame->Button(-text => "Connect", -command => \&sanitizeInputs )->pack(-side => 'left', -anchor => 'n');	
 ##End Connection Frame##
-	
+
+#Creates a label in the top left display the case currently "open"
+#my $caseLabel = $mw->Label(-text => "Current Case: $currentCaseName Location: $currentCaseLocation")->pack;#(-side => 'left', -anchor => 'nw');
+my $caseLabel = $mw->Label(-text => "$currentCaseName. You must open a case before imaging a VM")->pack;#(-side => 'left', -anchor => 'nw');
+
+
+##Dir Tree Frame##	
+my $dirTreeFrame = $mw->Frame(-borderwidth => 2, -relief => 'groove');
+$dirTreeFrame->pack(-side => 'right', -fill => 'both');
+#my $dirTreeLabel = $dirTreeFrame->Label(-text => "Directory listing of open case:\nOpen a case to populate\n")->pack;
+#my $dirTree = $dirTreeFrame->DirTree(-directory => $ESXiCasesDir, -width => 60, -height => 20, -browsecmd => \&listFiles)->pack(-side => 'left',  -anchor => 'n');
+my $dirTree = $dirTreeFrame->Scrolled('DirTree', -scrollbars => 'e', -directory => $ESXiCasesDir, -width => 35, -height => 20, -browsecmd => \&listFiles)->pack(-side => 'left',  -anchor => 'n', -fill => 'both');
+my $fileList = $dirTreeFrame->Scrolled('Listbox', -scrollbars => 'e', -width => 40, -height => 15)->pack(-side => 'left',  -anchor => 'n', -fill => 'both');
+listFiles($ESXiCasesDir);
+##End Dir Tree Frame##
 
 ##VM Choices Frame##
 my $vmChoicesFrame = $mw->Frame(-borderwidth => 2, -relief => 'groove');
-$vmChoicesFrame->pack(-side => 'right', -fill => 'both');
-#$vmChoicesFrame->Label(-text => "Connect to an ESXi server")->pack;
+$vmChoicesFrame->pack(-side => 'left', -fill => 'both', -expand => 1);
+my $vmChoicesLabel = $vmChoicesFrame->Label(-text => "Connect to an ESXi server to populate\n")->pack;
 ##EndVM Choices Frame##
 
 #$consoleLog->insert('end',"\nfoo");
@@ -112,6 +126,8 @@ sub readConfigFile
 				my @configFileSplit = split(/=/);
 				chomp($configFileSplit[1]);
 				$ESXiCasesDir = $configFileSplit[1];
+				$dirTree->chdir($ESXiCasesDir);
+				listFiles($ESXiCasesDir);
 			}
 			elsif($_ =~ m/LogFile=.+/)
 			{
@@ -255,11 +271,11 @@ sub findVMs
 #Confirms the users choices for which VMs they wish to acquire
 sub confirmUserVMImageChoices
 {
-	$consoleLog->insert('end',"--$currentCaseLocation--\n");
+	$consoleLog->insert('end',"--$currentCaseName--\n");
 
-	if(!($currentCaseLocation =~ m/[a-z]+|[A-Z]+/))
+	if($currentCaseName =~ m/No Case Opened Yet/)
 	{
-		my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "A case has not yet been opened. Open a case before imaging a VM. Current case location is $currentCaseLocation\n");
+		my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "A case has not yet been opened. Open a case before imaging a VM.\n");
 		$message->Show;
 	}
 	else
@@ -521,25 +537,30 @@ sub createNewCase
 	$createCaseWindowBottomFrame->grid(-row => 2, -column => 0, -columnspan => 2);
 	#$settingsWindowBottomFrame->Button(-text => "Save", -command => \&saveConfigFile )->pack(-side => "left");	
 	$createCaseWindowBottomFrame->Button(-text => "Create", -command => sub {
-		$currentCaseName = $newCaseName->get;
-		my $newCaseDirPath = $ESXiCasesDir . $currentCaseName;
-		#checks to see if cases directory structure exists then creates it if necessary
-		unless (-e $ESXiCasesDir or mkdir($ESXiCasesDir, 0755))
-		{die "Unable to create $ESXiCasesDir";}
-		
-		#Checks to see if case name user wants to make already exists
-		if (-e $newCaseDirPath)
-		{
-			my $error = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "The case name: $currentCaseName already exists. Please use another case name.");
-			$error->Show;
-		}
-		else
-		{
-			mkdir ($newCaseDirPath, 0755);
-			$currentCaseLocation = $newCaseDirPath;
-			$consoleLog->insert('end', "Created new case: $currentCaseName Location: $currentCaseLocation\n");
-			$caseLabel->configure(-text => "Current Case: $currentCaseName Location: $currentCaseLocation");
-		}
+			$currentCaseName = $newCaseName->get;
+			my $newCaseDirPath = $ESXiCasesDir . $currentCaseName;
+			#checks to see if cases directory structure exists then creates it if necessary
+			unless (-e $ESXiCasesDir or mkdir($ESXiCasesDir, 0755))
+			{die "Unable to create $ESXiCasesDir";}
+			
+			#Checks to see if case name user wants to make already exists
+			if (-e $newCaseDirPath)
+			{
+				my $error = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "The case name: $currentCaseName already exists. Please use another case name.");
+				$error->Show;
+			}
+			else
+			{
+				mkdir ($newCaseDirPath, 0755);
+				$currentCaseLocation = $newCaseDirPath;
+				$consoleLog->insert('end', "Created new case: $currentCaseName Location: $currentCaseLocation\n");
+				$caseLabel->configure(-text => "Current Case: $currentCaseName Location: $currentCaseLocation");
+				#$dirTreeLabel->configure(-text => "Directory listing of open case:\n");
+				#my $dirTree = $dirTreeFrame->DirTree(-directory => $currentCaseLocation)->pack;
+				$dirTree->chdir($currentCaseLocation);
+				listFiles($currentCaseLocation);
+				$mw->update;
+			}
 		
 	})->pack(-side => "left");	
 	my $cancelButton = $createCaseWindowBottomFrame->Button(-text => "Exit", -command => [$createCaseWindow => 'destroy'])->pack(-side => "left");
@@ -557,8 +578,11 @@ sub openExistingCase
 		$message->Show;
 	$consoleLog->insert('end', "Opened an existing case: $currentCaseName Location: $currentCaseLocation\n");
 	$caseLabel->configure(-text => "Current Case: $currentCaseName Location: $currentCaseLocation");
-	
-
+	#$dirTreeLabel->configure(-text => "Directory listing of open case:\n");
+	#my $dirTree = $dirTreeFrame->DirTree(-directory => $currentCaseLocation)->pack;
+	$dirTree->chdir($currentCaseLocation);
+	listFiles($currentCaseLocation);
+	$mw->update;
 }
 #***********************************************************************************************************************************#
 #******Start of Commonly Used Subs to Make Life Better******************************************************************************#
@@ -685,6 +709,31 @@ sub checkOS
 	}
 	return $osValue;
 }
+
+#given a directory path, will list all the files in given directory into the $fileList listbox next to the dirTree
+sub listFiles
+{
+	my $path = $_[0];
+	#deletes all the entries in the listbox before populating it
+	$fileList->delete(0,'end');
+	
+	opendir (DIR, $path);
+	$fileList->insert('end', $path);
+	$fileList->insert('end', "----------------------------------------------------------");
+	while (my $file = readdir(DIR))
+	{
+		next if $file =~ /^[.]/;
+		if (-f $file)
+		{
+			$fileList->insert('end', "its a fiole\n");
+		}
+		else
+		{$fileList->insert('end', $file);}
+	}
+	closedir(DIR);
+}
+
+
 #***********************************************************************************************************************************#
 #******End of Commonly Used Subs to Make Life Better********************************************************************************#
 #***********************************************************************************************************************************#
