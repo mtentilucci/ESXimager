@@ -512,7 +512,7 @@ sub confirmUserVMImageChoices
 				my $message = $mw->MsgBox(-title => "Info", -type => "ok", -icon => "info", -message => "\tDone!\nImaging process took $outputTime seconds\n");
 				$message->Show;
 				#Return the vm selection window to what it was origionally in case user wants to image more VMs
-				findVMs();
+				findVMs("/vmfs/volumes/");
 			}
 			else
 			{}
@@ -868,7 +868,7 @@ sub checkImageIntegrity
 				my %derefHash = %$hashRef;
 				my $savedHashRef = $derefHash{$_};
 				my %HoH = %$savedHashRef;
-				my $isDifferent;
+				my $isDifferent = 0;
 				foreach my $key (keys %HoH)
 				{
 					if ($key =~ m/.*MD5.*/)
@@ -943,7 +943,7 @@ sub checkImageIntegrity
 					
 					my $ref = $digest{$key};
 					my %HoH = %$ref;
-					my $isDifferent;
+					my $isDifferent = 0;
 					foreach my $otherKey (keys %HoH)
 					{
 						if ($otherKey =~ m/.*MD5.*/)
@@ -1574,7 +1574,7 @@ sub getDirName
 	shift @fileNameParts;
 	pop @fileNameParts;
 	
-	my $parentDirPath;
+	my $parentDirPath = "";
 	foreach(@fileNameParts)
 	{
 		$parentDirPath = $parentDirPath . "/" . $_;
@@ -1656,23 +1656,27 @@ sub calculateSHA1HashLocal
 #used the command 'md5sum' whereas OSX just uses 'md5'
 sub checkOS
 {
-	push @debugMessages, logIt("[debug] (main) Checking operating system.",0,0,0,0);
+	push @debugMessages, logIt("[debug] (main) Checking operating system.",0,0,0,0) if !defined $ESXiWorkingDir;
+	logIt("[debug] (main) Checking operating system.",0,0,0) if defined $ESXiWorkingDir ;
 	my $OS = $^O;
 	my $osValue;
 	if($OS eq "linux")
 	{
-		push @debugMessages, logIt("[debug] (main) Operating system is Linux.",0,0,0,0);
+		push @debugMessages, logIt("[debug] (main) Operating system is Linux.",0,0,0,0) if !defined $ESXiWorkingDir;
+		logIt("[debug] (main) Operating system is Linux.",0,0,0) if defined $ESXiWorkingDir ;
 		$osValue = 1;
 	}
 	#darwin aka osx
 	elsif($OS eq "darwin")
 	{
-		push @debugMessages, logIt("[debug] (main) Operating system is Mac OSX (darwin).",0,0,0,0);
+		push @debugMessages, logIt("[debug] (main) Operating system is Mac OSX (darwin).",0,0,0,0) if !defined $ESXiWorkingDir;
+		logIt("[debug] (main) Operating system is Mac OSX (darwin).",0,0,0) if defined $ESXiWorkingDir;
 		$osValue = 2;
 	}
 	else
 	{
-		push @debugMessages, logIt("[debug] (main) Unsupported operating system detected. ^O.",0,0,0,0);
+		push @debugMessages, logIt("[debug] (main) Unsupported operating system detected. ^O.",0,0,0,0) if !defined $ESXiWorkingDir;
+		logIt("[debug] (main) Unsupported operating system detected. ^O.",0,0,0) if defined $ESXiWorkingDir;
 		my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "You are running an operating system that this script is not designed to work for...\nYour operating system is: $^O\nSupported operating systems are Linux (linux) and OSX (darwin)\n");
 		$message->Show;
 		exit;
