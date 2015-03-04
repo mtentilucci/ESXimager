@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 use strict;
-#use warnings;
+use warnings;
 use Tk;
 use Tk::ProgressBar;
 use Tk::MsgBox;
@@ -13,42 +13,16 @@ use Data::Dumper;
 use Time::HiRes;
 
 ########################
-#ESXimager2.8.pl
+#ESXimager2.9.pl
 #Matt Tentilucci	
-#2-22-2014
-#
-#V2.1 - Adding in user confirmation of VM choices and passing them back to sshToESXi sub, removing lots of misc. lines from debugging/trial and error
-#V2.2 - Redesign user selection of VMs window and switched from grid to pack geometry manager. Instead of having a sub window, 
-# there will be a frame within main window that will be updated with the VM choices for the user to image. This should be a much
-# cleaner look and prevent multiple windows from popping up. Also added configuration file and Tools->Settings menu bar for editing it
-#V2.3 - Added in menu item to open an existing case, variable cleanup, create new case, open case
-#V2.4 - Created dirTreeFrame to show case directory listing to use once a case has been opened -> future, allow user to click on files and get info(size, hash, etc...)
-# moved some boxes around, the connect frame is now horizontial at the top of the window
-#V2.5 - Improved VM imaging window. Asks the user what VM they want to image, then what files from that VM, then confirms selection. Added windows telling the user
-# what the program is doing, when the file gets DD, or hashes are being calculated because the program will not respond to user inputs when those things are being executed
-# Controled where subwindows are shown on the screen, they show up in the middle of the main window. Changed console log box to scrolled and tied STDOUT to print in the box. 
-# Now using print will print in the consoleLog, also $consoleLog->see('end') shows the bottom of the console log and esentially makes it scroll automatically as it grows 
-# After the image has been dd'd and SFTP'd the script will cleanup the .dd files is created on the ESXi server
-# Made the checkbutton frame scrolled when user has to select what vms/files they want to image
-#V2.6 - Integrating buttons into file listing listbox to put selected file through strings and hexdump -C. Case names will not allow spaces, will =~ s/ //;
-#V2.7 - Improved logging capabilities. Added Overall log file to keep track if everything, added case log file that keeps track of things related to a praticular case
-# created logIt sub to simpfily logging since log messages need to go to multiple places
-#V2.8 - Create xml data structure to store a hash log of file acquired. Each case will have its own "hash log" xml file
-# Implemented a way to verify the integrity of the images takes both automatically after the imaging process is complete and also manually through 
-# the Tools->Verify Integrity menu button
-# Added in way to view an image files information, hash history, size, etc... view->file information
-#V2.8A - Removed unnecessary comments, removed unnecessary lines, condensed code = ~250 lines
-#V2.9A - Misc. spelling fixes, create case window now appears in middle of screen, changed dd to use bs=1M b/c the datastores default to 1M block sizes(Should find the 
-# block size by executing vmfstools --query -h /path/to/volume and parsing output)
-# Also since MD5 and SHA1 values are calculated, tried to give some indication as to which one is currently being calculated by slightly changing the window depending on which is being calculated 
-# Added in elapsed time it takes each operation to complete. Gives user about how long it takes to calculate hashes and for dd to complete. These times are displayed and logged
-# once the task has completed. Updating in real time would require forking of the dd and hash tasks which would require possibly major code changes this late 
+#mjt5206@psu.edu
+#3-4-2014
 ########################
 
 #Before the config file is read and the desired log file location is determined, I want to log debug messages so I will utilize this array
 my @debugMessages;
-push @debugMessages, logIt("[debug] (main) Program opened.",0,0,0);
-push @debugMessages, logIt("[debug] (main) Initilizing some variables.",0,0,0);
+push @debugMessages, logIt("[debug] (main) Program opened.",0,0,0,0);
+push @debugMessages, logIt("[debug] (main) Initilizing some variables.",0,0,0,0);
 #variable so ssh session to esxi can be accessible outside of sub
 my $ssh;
 my $checkFrame1;
@@ -72,16 +46,16 @@ my $currentCaseLocation;
 my $currentCaseLog;
 my $currentCaseIntegrityFile;
 
-push @debugMessages, logIt("[debug] (main) Done initilizing variables.",0,0,0);
+push @debugMessages, logIt("[debug] (main) Done initilizing variables.",0,0,0,0);
 
 #Creates main window
 my $mw = MainWindow->new;
-push @debugMessages, logIt("[debug] (main) Creating MainWindow.",0,0,0);
+push @debugMessages, logIt("[debug] (main) Creating MainWindow.",0,0,0,0);
 $mw->title("ESXimager 2.9");
 $mw->geometry("1400x600");
 
 #Create menu bar
-push @debugMessages, logIt("[debug] (main) Creating menu bar.",0,0,0);
+push @debugMessages, logIt("[debug] (main) Creating menu bar.",0,0,0,0);
 $mw->configure(-menu => my $menubar = $mw->Menu);
 my $file = $menubar->cascade(-label => '~File');
 my $tools = $menubar->cascade(-label => '~Tools');
@@ -100,12 +74,12 @@ $help->command(-label => "About", -command => \&showHelp);
 
 #console window
 #Anytime print is used, it will output to the $consoleLog window
-push @debugMessages, logIt("[debug] (main) Creating ConsoleLog window.",0,0,0);
+push @debugMessages, logIt("[debug] (main) Creating ConsoleLog window.",0,0,0,0);
 my $consoleLog = $mw->Scrolled('Text',-height => 10, -width => 125)->pack(-side => 'bottom', -fill => 'both');
 tie *STDOUT, 'Tk::Text', $consoleLog->Subwidget('scrolled');
 
 ##Connection Frame##
-push @debugMessages, logIt("[debug] (main) Creating Connection Frame.",0,0,0);
+push @debugMessages, logIt("[debug] (main) Creating Connection Frame.",0,0,0,0);
 #Create top left frame for holding username, password, server IP, connect button widgets
 my $connectionFrame = $mw->Frame(-borderwidth => 2, -relief => 'groove');
 $connectionFrame->pack;#(-side => 'left', -anchor => 'nw');
@@ -130,21 +104,21 @@ $connectionFrame->Button(-text => "Connect", -command => \&sanitizeInputs )->pac
 my $caseLabel = $mw->Label(-text => "$currentCaseName. You must open a case before imaging a VM")->pack;#(-side => 'left', -anchor => 'nw');
 
 ##Dir File Frame##	
-push @debugMessages, logIt("[debug] (main) Creating Dir File Frame.",0,0,0);
+push @debugMessages, logIt("[debug] (main) Creating Dir File Frame.",0,0,0,0);
 my $dirFileFrame = $mw->Frame(-borderwidth => 2, -relief => 'groove');
 $dirFileFrame->pack(-side => 'right', -fill => 'both');
 ###Dir Tree Frame##
-push @debugMessages, logIt("[debug] (main) Creating Dir Tree Frame.",0,0,0);
+push @debugMessages, logIt("[debug] (main) Creating Dir Tree Frame.",0,0,0,0);
 my $dirTreeFrame = $dirFileFrame->Frame(-borderwidth => 2, -relief => 'groove');
 $dirTreeFrame->pack(-side => 'left', -fill => 'both');
 my $dirTree = $dirTreeFrame->Scrolled('DirTree', -scrollbars => 'e', -directory => $ESXiCasesDir, -width => 35, -height => 20, -browsecmd => \&listFiles)->pack(-side => 'left',  -anchor => 'n', -fill => 'both');
 ###End Dir Tree Frame##
 ###File List Frame##
-push @debugMessages, logIt("[debug] (main) Creating File List Frame.",0,0,0);
+push @debugMessages, logIt("[debug] (main) Creating File List Frame.",0,0,0,0);
 my $fileListFrame = $dirFileFrame->Frame(-borderwidth => 2, -relief => 'groove');
 $fileListFrame->pack(-side => 'right', -fill => 'both');
 my $fileList = $fileListFrame->Scrolled('Listbox', -scrollbars => 'e', -width => 40, -height => 15)->pack(-side => 'top',  -anchor => 'n', -fill => 'both', -expand => 1);
-listFiles($ESXiCasesDir);
+
 $fileListFrame->Label(-text => "Display Selected File In: ")->pack(-side => 'left', -anchor => 's', -fill => 'both');
 my $stringsButton = $fileListFrame->Button(-text => "Strings", -command => [\&runThroughStrings, \$fileList])->pack(-side => 'left', -anchor => 's', -fill => 'both', -expand => 1);
 my $hexdumpButton = $fileListFrame->Button(-text => "Hexdump", -command => [\&runThroughHexdump, \$fileList])->pack(-side => 'left', -anchor => 's', -fill => 'both', -expand => 1);
@@ -154,7 +128,7 @@ my $hexdumpButton = $fileListFrame->Button(-text => "Hexdump", -command => [\&ru
 $view->command(-label => "File Information", -command => [\&viewFileInfo, \$fileList]);
 
 ##VM Choices Frame##
-push @debugMessages, logIt("[debug] (main) Creating VM Choices Frame.",0,0,0);
+push @debugMessages, logIt("[debug] (main) Creating VM Choices Frame.",0,0,0,0);
 my $vmChoicesFrame = $mw->Frame(-borderwidth => 2, -relief => 'groove');
 $vmChoicesFrame->pack(-side => 'left', -fill => 'both', -expand => 1);
 my $vmChoicesLabel = $vmChoicesFrame->Label(-text => "Connect to an ESXi server to populate\n")->pack;
@@ -162,10 +136,12 @@ my $vmChoicesLabel = $vmChoicesFrame->Label(-text => "Connect to an ESXi server 
 
 $consoleLog->see('end');
 
-push @debugMessages, logIt("[debug] (main) Done creating Main Window.",0,0,0);
+push @debugMessages, logIt("[debug] (main) Done creating Main Window.",0,0,0,0);
 checkOS();
 readConfigFile();
 
+#This needs to be called after the config file is opened and $ESXiCasesDir defined
+listFiles($ESXiCasesDir);
 #In addition to opening the program log file, we can open and print out everything to our debug log file
 my $debugLogLocation = $logFileDestination;
 $debugLogLocation =~ s/\.log/Debug\.log/;
@@ -196,9 +172,9 @@ sub readConfigFile
 	#if config file exists
 	if (-e $expectedConfigFileLoc)
 	{
-		push @debugMessages, logIt("[debug] (main) Found config file in expected location, here: $expectedConfigFileLoc.",0,0,0);
+		push @debugMessages, logIt("[debug] (main) Found config file in expected location, here: $expectedConfigFileLoc.",0,0,0,0);
 		open (CONFIGFILE, $expectedConfigFileLoc); 
-		push @debugMessages, logIt("[debug] (main) Reading config file.",0,0,0);
+		push @debugMessages, logIt("[debug] (main) Reading config file.",0,0,0,0);
 		while(<CONFIGFILE>)
 		{
 			chomp($_);
@@ -207,14 +183,14 @@ sub readConfigFile
 				my @configFileSplit = split(/=/);
 				chomp($configFileSplit[1]);
 				$ESXiWorkingDir = $configFileSplit[1];
-				push @debugMessages, logIt("[debug] (main) Setting ESXi Working Dir to: $ESXiWorkingDir.",0,0,0);
+				push @debugMessages, logIt("[debug] (main) Setting ESXi Working Dir to: $ESXiWorkingDir.",0,0,0,0);
 			}
 			elsif($_ =~ m/CaseDir=.+/)
 			{
 				my @configFileSplit = split(/=/);
 				chomp($configFileSplit[1]);
 				$ESXiCasesDir = $configFileSplit[1];
-				push @debugMessages, logIt("[debug] (main) Setting ESXi cases directory to: $ESXiCasesDir.",0,0,0);
+				push @debugMessages, logIt("[debug] (main) Setting ESXi cases directory to: $ESXiCasesDir.",0,0,0,0);
 				$dirTree->chdir($ESXiCasesDir);
 				listFiles($ESXiCasesDir);
 			}
@@ -223,11 +199,11 @@ sub readConfigFile
 				my @configFileSplit = split(/=/);
 				chomp($configFileSplit[1]);
 				$logFileDestination = $configFileSplit[1];
-				push @debugMessages, logIt("[debug] (main) Setting log file destination to: $logFileDestination.",0,0,0);
+				push @debugMessages, logIt("[debug] (main) Setting log file destination to: $logFileDestination.",0,0,0,0);
 			}
 			else
 			{
-				push @debugMessages, logIt("[debug] (main) Misformated Config file, dont know what $_ is.",0,0,0);
+				push @debugMessages, logIt("[debug] (main) Misformated Config file, dont know what $_ is.",0,0,0,0);
 				$consoleLog->insert('end', "Misformated Config file, dont know what $_ is\n");
 				$consoleLog->see('end');
 			}
@@ -237,7 +213,7 @@ sub readConfigFile
 	#config file must not exist in the expected location
 	else
 	{
-		push @debugMessages, logIt("[debug] (main) No config file could be located. Going to create config file.",0,0,0);
+		push @debugMessages, logIt("[debug] (main) No config file could be located. Going to create config file.",0,0,0,0);
 		my $message = $mw->MsgBox(-title => "Info", -type => "ok", -icon => "info", -message => "It appears this is the first time you are running this program, a configuration file could not be located. The following window will allow you to create a configuration file.");
 		$message->Show;
 		editSettings();
@@ -614,7 +590,7 @@ sub ddTargetFile
 	$mw->update;
 	sleep(1);
 
-	my $subWindow = $mw->Toplevel;
+	$subWindow = $mw->Toplevel;
 	$subWindow->title("(Step 2/5) Creating bit level copy with DD");
 	
 	#Dont need to recalculate window position again b/c the main window should not have been moved. Just using values calculated from above
@@ -642,7 +618,7 @@ sub ddTargetFile
 	logIt("[info] ($currentCaseName) DD of file: $absolutePathFileToDD to Destination: $ddDestination Done.", 1, 1, 1);
 	
 	sleep(1);
-	my $subWindow = $mw->Toplevel;
+	$subWindow = $mw->Toplevel;
 	$subWindow->title("(Step 3/5) Calculating *MD5* and SHA1 hashes after DD");
 	
 	#Dont need to recalculate window position again b/c the main window should not have been moved. Just using values calculated from above
@@ -753,11 +729,11 @@ sub sftpTargetFileImage
 	$fileSize = returnFileSize($fileSize);
 	
 	#Create subwindow to tell use the program is calculating hashes
-	my $subWindow = $mw->Toplevel;
+	$subWindow = $mw->Toplevel;
 	$subWindow->title("(Step 5/5) Calculating *MD5* and SHA1 hashes after SFTP transfer");
 	#Adjusts the sub window to appear in the middle of the main window
-	my $xpos = int((($mw->width - $subWindow->width) / 2) + $mw->x);
-	my $ypos = int((($mw->height - $subWindow->height) / 2) + $mw->y);
+	$xpos = int((($mw->width - $subWindow->width) / 2) + $mw->x);
+	$ypos = int((($mw->height - $subWindow->height) / 2) + $mw->y);
 	$subWindow->geometry("+$xpos+$ypos");
 	
 	#Tells the user what is happening b/c they will not have control while hashes are being calculated
@@ -1418,7 +1394,7 @@ sub runThroughStrings
 		$stringsOutputWindow->insert('end', $stdout);
 	}
 	#To prevent anything from happening if the user selects the divider line ------------------------ or the current directory path located at the top of the listbox
-	elsif($cursorSelection[0] == 1 | $cursorSelection[0] == 0)
+	elsif($cursorSelection[0] == 1 || $cursorSelection[0] == 0)
 	{
 		my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "No valid file selected. Please select a file.\n");
 		$message->Show;
@@ -1453,7 +1429,7 @@ sub runThroughHexdump
 		$stringsOutputWindow->insert('end', $stdout);
 	}
 	#To prevent anything from happening if the user selects the divider line ------------------------ or the current directory path located at the top of the listbox
-	elsif($cursorSelection[0] == 1 | $cursorSelection[0] == 0)
+	elsif($cursorSelection[0] == 1 || $cursorSelection[0] == 0)
 	{
 		my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "No valid file selected. Please select a file.\n");
 		$message->Show;
@@ -1511,7 +1487,7 @@ sub viewFileInfo
 		$message->Show;
 	}
 	#To prevent anything from happening if the user selects the divider line ------------------------ or the current directory path located at the top of the listbox
-	elsif($cursorSelection[0] == 1 | $cursorSelection[0] == 0)
+	elsif($cursorSelection[0] == 1 || $cursorSelection[0] == 0)
 	{
 		my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "No valid file selected. Please select a file.\n");
 		$message->Show;
@@ -1530,21 +1506,29 @@ sub viewFileInfo
 
 #simpflies logging. Will take what you want to print as an arguement and output to $consoleLog, the main program log, and the current case log
 #Expects he exact message to be printed. ex. [info] (foo) case foo was opened
-#Also expects three values 0 or 1 to determine what to print out to (for whatever reason a message need to only be printed to one log file)
-# Args: message programLogFile caseLogFile consoleLog
+#Also expects 4 values 0 or 1 to determine what to print out to (for whatever reason a message need to only be printed to one log file). Last value is
+# optional if they want debug messages to be printed. This solves a problem in the begining of the program where logIt is being run but the DEBUGLOGFILE 
+# handle has not been opened yet. Not a problem really but it show up with use warnings;
+# Args: message programLogFile caseLogFile consoleLog debugLogFile
 sub logIt
 {
+	my $debugLogPrint = 1;
 	my $lineToPrint = $_[0];
 	my $programLogPrint = $_[1];
 	my $caseLogPrint = $_[2];
 	my $consoleLogPrint = $_[3];
+	#allows the fourth arg of the sub to be optional. By default all messages should be printed to the debug log file but it can be controlled if necessary
+	if (defined $_[4])
+	{
+		$debugLogPrint = $_[4];
+	}
 	
-	my $lineToPrint = getLoggingTime() . " " . $lineToPrint . "\n";
+	$lineToPrint = getLoggingTime() . " " . $lineToPrint . "\n";
 	print PROGRAMLOGFILE $lineToPrint if $programLogPrint == 1;
 	print $currentCaseLog $lineToPrint if $caseLogPrint == 1;
 	$consoleLog->insert('end', $lineToPrint) if $consoleLogPrint == 1;
 	$consoleLog->see('end') if $consoleLogPrint == 1;
-	print DEBUGLOGFILE $lineToPrint;
+	print DEBUGLOGFILE $lineToPrint if $debugLogPrint == 1;
 	return $lineToPrint;
 }
 
@@ -1672,23 +1656,23 @@ sub calculateSHA1HashLocal
 #used the command 'md5sum' whereas OSX just uses 'md5'
 sub checkOS
 {
-	push @debugMessages, logIt("[debug] (main) Checking operating system.",0,0,0);
+	push @debugMessages, logIt("[debug] (main) Checking operating system.",0,0,0,0);
 	my $OS = $^O;
 	my $osValue;
 	if($OS eq "linux")
 	{
-		push @debugMessages, logIt("[debug] (main) Operating system is Linux.",0,0,0);
+		push @debugMessages, logIt("[debug] (main) Operating system is Linux.",0,0,0,0);
 		$osValue = 1;
 	}
 	#darwin aka osx
 	elsif($OS eq "darwin")
 	{
-		push @debugMessages, logIt("[debug] (main) Operating system is Mac OSX (darwin).",0,0,0);
+		push @debugMessages, logIt("[debug] (main) Operating system is Mac OSX (darwin).",0,0,0,0);
 		$osValue = 2;
 	}
 	else
 	{
-		push @debugMessages, logIt("[debug] (main) Unsupported operating system detected. ^O.",0,0,0);
+		push @debugMessages, logIt("[debug] (main) Unsupported operating system detected. ^O.",0,0,0,0);
 		my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "You are running an operating system that this script is not designed to work for...\nYour operating system is: $^O\nSupported operating systems are Linux (linux) and OSX (darwin)\n");
 		$message->Show;
 		exit;
