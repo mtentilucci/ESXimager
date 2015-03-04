@@ -5,14 +5,15 @@ use Tk::ProgressBar;
 use Tk::MsgBox;
 use Tk::DirTree;
 use Tk::Pane;
+use Tk::Font;
 #use Tk::Text;
 use Net::OpenSSH;
 use Net::SFTP::Foreign;
 
 ########################
-#ESXimager2.5.pl
+#ESXimager2.6.pl
 #Matt Tentilucci	
-#12-4-2014
+#12-6-2014
 #
 #V2.1 - Adding in user confirmation of VM choices and passing them back to sshToESXi sub, removing lots of misc. lines from debugging/trial and error
 #V2.2 - Redesign user selection of VMs window and switched from grid to pack geometry manager. Instead of having a sub window, 
@@ -27,6 +28,8 @@ use Net::SFTP::Foreign;
 # Now using print will print in the consoleLog, also $consoleLog->see('end') shows the bottom of the console log and esentially makes it scroll automatically as it grows 
 # After the image has been dd'd and SFTP'd the script will cleanup the .dd files is created on the ESXi server
 # Made the checkbutton frame scrolled when user has to select what vms/files they want to image
+#V2.6 - Integrating buttons into file listing listbox to put selected file through strings and hexdump -C. Case names will not allow spaces, will =~ s/ //;
+#
 ########################
 
 #variable so ssh session to esxi can be accessible outside of sub
@@ -46,7 +49,7 @@ my $currentCaseLocation;
 
 #Creates main window
 my $mw = MainWindow->new;
-$mw->title("ESXimager 2.5");
+$mw->title("ESXimager 2.6");
 $mw->geometry("1400x600");
 
 #Create menu bar
@@ -64,6 +67,7 @@ $file->command(-label => "Quit", -underline => 0, -command => \&exit);
 $tools->command(-label => "Settings", -command => \&editSettings);
 
 #console window
+#Anytime print is used, it will output to the $consoleLog window
 #my $consoleLog = $mw->Text(-height => 10, -width => 125)->pack(-side => 'bottom', -fill => 'both');
 my $consoleLog = $mw->Scrolled('Text',-height => 10, -width => 125)->pack(-side => 'bottom', -fill => 'both');
 tie *STDOUT, 'Tk::Text', $consoleLog->Subwidget('scrolled');
@@ -94,14 +98,25 @@ $connectionFrame->Button(-text => "Connect", -command => \&sanitizeInputs )->pac
 my $caseLabel = $mw->Label(-text => "$currentCaseName. You must open a case before imaging a VM")->pack;#(-side => 'left', -anchor => 'nw');
 
 
-##Dir Tree Frame##	
-my $dirTreeFrame = $mw->Frame(-borderwidth => 2, -relief => 'groove');
-$dirTreeFrame->pack(-side => 'right', -fill => 'both');
+##Dir File Frame##	
+my $dirFileFrame = $mw->Frame(-borderwidth => 2, -relief => 'groove');
+$dirFileFrame->pack(-side => 'right', -fill => 'both');
+###Dir Tree Frame##
+my $dirTreeFrame = $dirFileFrame->Frame(-borderwidth => 2, -relief => 'groove');
+$dirTreeFrame->pack(-side => 'left', -fill => 'both');
 #my $dirTreeLabel = $dirTreeFrame->Label(-text => "Directory listing of open case:\nOpen a case to populate\n")->pack;
 #my $dirTree = $dirTreeFrame->DirTree(-directory => $ESXiCasesDir, -width => 60, -height => 20, -browsecmd => \&listFiles)->pack(-side => 'left',  -anchor => 'n');
 my $dirTree = $dirTreeFrame->Scrolled('DirTree', -scrollbars => 'e', -directory => $ESXiCasesDir, -width => 35, -height => 20, -browsecmd => \&listFiles)->pack(-side => 'left',  -anchor => 'n', -fill => 'both');
-my $fileList = $dirTreeFrame->Scrolled('Listbox', -scrollbars => 'e', -width => 40, -height => 15)->pack(-side => 'left',  -anchor => 'n', -fill => 'both');
+###End Dir Tree Frame##
+###File List Frame##
+my $fileListFrame = $dirFileFrame->Frame(-borderwidth => 2, -relief => 'groove');
+$fileListFrame->pack(-side => 'right', -fill => 'both');
+my $fileList = $fileListFrame->Scrolled('Listbox', -scrollbars => 'e', -width => 40, -height => 15)->pack(-side => 'top',  -anchor => 'n', -fill => 'both', -expand => 1);
 listFiles($ESXiCasesDir);
+$fileListFrame->Label(-text => "Display Selected File In: ")->pack(-side => 'left', -anchor => 's', -fill => 'both');
+my $stringsButton = $fileListFrame->Button(-text => "Strings", -command => [\&runThroughStrings, \$fileList])->pack(-side => 'left', -anchor => 's', -fill => 'both', -expand => 1);
+my $hexdumpButton = $fileListFrame->Button(-text => "Hexdump", -command => [\&runThroughHexdump, \$fileList])->pack(-side => 'left', -anchor => 's', -fill => 'both', -expand => 1);
+###End File List Frame##
 ##End Dir Tree Frame##
 
 ##VM Choices Frame##
@@ -286,18 +301,13 @@ sub findVMs
 	foreach(@vmxFound)
 	{
 		$checkButtonValues[$counter] = '0';
-		$checkButtons[$counter] = $checkFrame1->Checkbutton(-text => $_,
-									-onvalue => $_,
-                                    -offvalue => '0',
-									-variable => \$checkButtonValues[$counter])->pack();
+		$checkButtons[$counter] = $checkFrame1->Checkbutton(-text => $_,-onvalue => $_,-offvalue => '0',-variable => \$checkButtonValues[$counter])->pack();
 		$counter++;
 	}
 	
 	#Creates ok and cancel button to approve VM selections
 	$buttonFrame1 = $vmChoicesFrame->Frame()->pack(-side => "bottom");
-	my $okButton = $buttonFrame1->Button(-text => 'Next',
-                                       -command => [\&selectVMFiles, \@checkButtonValues]
-									   )->pack(-side => "left");
+	my $okButton = $buttonFrame1->Button(-text => 'Next', -command => [\&selectVMFiles, \@checkButtonValues])->pack(-side => "left");
 	#my $cancelButton = $buttonFrame->Button(-text => "Cancel", -command => [$subWindow => 'destroy'])->pack();
 }
 
@@ -305,6 +315,7 @@ sub findVMs
 #Asks the user what files they want to acquire, .vmx .vmdk .vmem etc.....
 sub selectVMFiles
 {
+	my @vmsToRestart;
 	if($currentCaseName =~ m/No Case Opened Yet/)
 	{
 		my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "A case has not yet been opened. Open a case before imaging a VM.\n");
@@ -327,7 +338,6 @@ sub selectVMFiles
 				#$consoleLog->insert('end',"**--$_-- is 0\n");
 			}
 		}
-		
 		my $count = @findVMFiles;
 		if ($count == 0)
 		{
@@ -336,6 +346,22 @@ sub selectVMFiles
 		}
 		else
 		{
+			foreach(@findVMFiles)
+			{
+				my $vmStatus = checkIfVMRunning($_);
+				print "VM status is: $vmStatus\n";
+				if ($vmStatus == 1)
+				{
+					my $messageBoxAnswer = $mw->messageBox(-title => "Suspend Virtual Machine?", -type => "YesNo", -icon => "question", -message => "$_ is currently powered on and running.\nDo you want to suspend it?\n", -default => "yes");
+					$consoleLog->insert('end',"**Message box answer: --$messageBoxAnswer--\n");
+					$consoleLog->see('end');
+					if ($messageBoxAnswer eq 'Yes')
+					{
+						suspendVM($_);
+						push @vmsToRestart, $_;						
+					}
+				}	
+			}
 			$checkFrame1->destroy();
 			$buttonFrame1->destroy();
 			
@@ -365,27 +391,20 @@ sub selectVMFiles
 					my $filePath = $VMDirPath . $_;
 				
 					$checkButtonValues[$counter] = '0';
-					$checkButtons[$counter] = $checkFrame2->Checkbutton(-text => $filePath,
-												-onvalue => $filePath,
-												-offvalue => '0',
-												-variable => \$checkButtonValues[$counter])->pack();
+					$checkButtons[$counter] = $checkFrame2->Checkbutton(-text => $filePath,-onvalue => $filePath,-offvalue => '0',-variable => \$checkButtonValues[$counter])->pack();
 					$counter++;
 				}
 			}
-		
 			#Creates ok and cancel button to approve VM selections
 			$buttonFrame2 = $vmChoicesFrame->Frame()->pack(-side => "bottom");
-			my $backButton = $buttonFrame2->Button(-text => 'Back',
-											   -command => [\&findVMs]
-											   )->pack(-side => "left");
-			my $okButton = $buttonFrame2->Button(-text => 'Next',
-											   -command => [\&confirmUserVMImageChoices, \@checkButtonValues]
-											   )->pack(-side => "left");
+			my $backButton = $buttonFrame2->Button(-text => 'Back',-command => [\&findVMs])->pack(-side => "left");
+			my $okButton = $buttonFrame2->Button(-text => 'Next',-command => [\&confirmUserVMImageChoices, \@checkButtonValues, \@vmsToRestart])->pack(-side => "left");
 		}		
 	}
 }
 
-#Step 3: Confirms the users choices for which VMs they wish to acquire
+#Step 3: Confirms the users choices for which VMs they wish to acquire, expects a refrence to the array of checkButton choices as well as a 
+#refrence to the array of VMs that need to be restarted once imaging is complete
 sub confirmUserVMImageChoices
 {
 	$consoleLog->insert('end',"--$currentCaseName--\n");
@@ -398,7 +417,8 @@ sub confirmUserVMImageChoices
 	}
 	else
 	{
-		my $choicesRef = shift; #$_[0];
+		my $choicesRef = $_[0]; #shift; #$_[0];
+		my $vmsToRestartRef = $_[1];
 		my @VMsToImage;
 		foreach(@$choicesRef)
 		{
@@ -445,6 +465,11 @@ sub confirmUserVMImageChoices
 					$consoleLog->see('end');
 					$mw->update;
 					sftpTargetFileImage($targetImageFile);
+				}
+				#Restart VMs that were suspended once the imaging process is complete
+				foreach (@$vmsToRestartRef)
+				{
+					startVM($_);
 				}
 				#Maybe add more info to the "done" window
 				my $message = $mw->MsgBox(-title => "Info", -type => "ok", -icon => "info", -message => "Done!\n");
@@ -642,6 +667,136 @@ sub sftpTargetFileImage
 	cleanup($fileToSFTP);
 }
 
+#Checks if the virtual machine use wants to image is currently powered on/running. Ideally you want to freeze the VM so nothing changes as you acquire the VM
+#Expects to be passed the absolute path to the VM in questions .vmx file
+sub checkIfVMRunning
+{
+	my $vmxPath = $_[0];
+	my $stdout = $ssh->capture('/sbin/vmdumper -l');
+	my @lines = split(/\n/, $stdout);
+	foreach(@lines)
+	{
+		#print "going to work on $_\n";
+		my @lineParts = split(/\s+/, $_);
+		foreach (@lineParts)
+		{
+			#print "comparing $vmxPath is $_\n";
+			if ($_ =~ m/$vmxPath/)
+			{
+				#print "Match, $vmxPath is $_\n";
+				return 1;
+				last;
+			}
+		}
+	}
+	return 0;
+}
+
+#suspends a given VM, expects absolute path to vm's .vmx path
+sub suspendVM
+{
+	my $vmxPath = $_[0];
+	my $stdout = $ssh->capture('/sbin/vmdumper -l');
+	my @lines = split(/\n/, $stdout);
+	foreach(@lines)
+	{
+		my @lineParts = split(/\s+/, $_);
+		foreach (@lineParts)
+		{
+			print "comparing $vmxPath is $_\n";
+			if ($_ =~ m/$vmxPath/)
+			{
+				print "Match, $vmxPath is $_\n";
+				print "here is the current WID $lineParts[0]\n";
+				my $VMwid = $lineParts[0];
+				$VMwid =~ s/=/ /g;
+				my @VMwidSplit = split(/\s+/,$VMwid);
+				print "Cleaned WID $VMwidSplit[1]\n";
+				print "going to execute /sbin/vmdumper $VMwidSplit[1] suspend_vm\n";
+				my $stdout = $ssh->capture("/sbin/vmdumper $VMwidSplit[1] suspend_vm") or warn "remote command failed " . $ssh->error;
+				print "Suspending VM...";
+				
+				my $subWindow = $mw->Toplevel;
+				$subWindow->title("Suspending VM: $vmxPath");
+				#Adjusts the sub window to appear in the middle of the main window
+				my $xpos = int((($mw->width - $subWindow->width) / 2) + $mw->x);
+				my $ypos = int((($mw->height - $subWindow->height) / 2) + $mw->y);
+				$subWindow->geometry("+$xpos+$ypos");
+				
+				my $size = 24;
+				my $font = $subWindow->fontCreate(-size => $size);
+				#,-height => 10, -width => 125
+				my $text = "Suspending VM...";
+				my $suspendVMLabel = $subWindow->Label(-text => $text,-width => 20, -font => $font)->pack(-fill => 'both');
+				$mw->update;
+				my $vmStillRunning = 1;
+				while ($vmStillRunning == 1)
+				{
+					$vmStillRunning = checkIfVMRunning($vmxPath);
+					print ".";
+					$text = $text . ".";
+					$suspendVMLabel->configure(-text => $text);
+					$mw->update;
+					sleep(1);
+				}
+				print "Done!\n";
+				$subWindow->destroy();
+				return 0;
+			}
+		}
+	}
+	return 0;
+}
+
+#starts a given VM, expects absolute path to .vmx file in question
+sub startVM
+{
+	my $vmToRestart = $_[0];
+	print "going to try and restart this vm $vmToRestart\n";
+	my $vmxFile = getFileName($vmToRestart);
+	print "this is the vmx $vmxFile\n";
+	my $stdout = $ssh->capture("vim-cmd vmsvc/getallvms |grep $vmxFile");
+	my @lines = split(/\n/, $stdout);
+	my $count = @lines;
+	#only one .vmx file was matched so we dont need to worry about starting the wrong VM
+	if ($count == 1)
+	{
+		my @parts = split(/\s+/, $lines[0]);
+		print "@parts\n";
+		print "Here is the VMID $parts[0]\n";
+		print "This command can be executed vim-cmd vmsvc/power.on $parts[0]\n";
+		my $stdout = $ssh->capture("vim-cmd vmsvc/power.on $parts[0]") or warn "remote command failed " . $ssh->error;
+		print "Starting VM...";
+		
+		my $subWindow = $mw->Toplevel;
+		$subWindow->title("Starting VM: $vmToRestart");
+		#Adjusts the sub window to appear in the middle of the main window
+		my $xpos = int((($mw->width - $subWindow->width) / 2) + $mw->x);
+		my $ypos = int((($mw->height - $subWindow->height) / 2) + $mw->y);
+		$subWindow->geometry("+$xpos+$ypos");
+		
+		my $size = 24;
+		my $font = $subWindow->fontCreate(-size => $size);
+		#,-height => 10, -width => 125
+		my $text = "Strting VM...";
+		my $startVMLabel = $subWindow->Label(-text => $text,-width => 20, -font => $font)->pack(-fill => 'both');
+		$mw->update;
+		my $vmStillRunning = 0;
+		while ($vmStillRunning == 0)
+		{
+			$vmStillRunning = checkIfVMRunning($vmToRestart);
+			print ".";
+			$text = $text . ".";
+			$startVMLabel->configure(-text => $text);
+			$mw->update;
+			sleep(1);
+		}
+		print "Done!\n";
+		$subWindow->destroy();
+		return 0;
+	}
+}
+
 #because the dd images are being stored into the same directory the file exists in on the ESXi server, we want to clean up these files when we are done
 #expects the absolute path of the file to delete on the esxi server and will also check that the file has a .dd extension so the wrong file does not get deleted which would be very bad
 #ideally dd would "store" copies somewhere else but this is how I have it setup for now
@@ -713,6 +868,10 @@ sub editSettings
 
 	my $settingsWindow = $mw->Toplevel;
 	$settingsWindow->title("Settings");
+	#Adjusts the sub window to appear in the middle of the main window
+	my $xpos = int((($mw->width - $settingsWindow->width) / 2) + $mw->x);
+	my $ypos = int((($mw->height - $settingsWindow->height) / 2) + $mw->y);
+	$settingsWindow->geometry("+$xpos+$ypos");
 	
 	#label for configuration file location
 	$settingsWindow->Label(-text => "Configuration File Location: $configFileLocation")->grid(-row => 0, -column => 0);
@@ -774,6 +933,10 @@ sub createNewCase
 	#$settingsWindowBottomFrame->Button(-text => "Save", -command => \&saveConfigFile )->pack(-side => "left");	
 	$createCaseWindowBottomFrame->Button(-text => "Create", -command => sub {
 			$currentCaseName = $newCaseName->get;
+			#Dont want case names to have any spaces
+			$currentCaseName =~ s/ //g;
+			print "current case name: $currentCaseName\n";
+			$mw->update;
 			my $newCaseDirPath = $ESXiCasesDir . $currentCaseName;
 			#checks to see if cases directory structure exists then creates it if necessary
 			unless (-e $ESXiCasesDir or mkdir($ESXiCasesDir, 0755))
@@ -838,7 +1001,7 @@ sub listFiles
 		next if $file =~ /^[.]/;
 		if (-f $file)
 		{
-			$fileList->insert('end', "its a fiole\n");
+			$fileList->insert('end', "its a file\n");
 		}
 		else
 		{$fileList->insert('end', $file);}
@@ -846,6 +1009,107 @@ sub listFiles
 	closedir(DIR);
 }
 
+#Runs a selected file from the file listbox through the strings command and shows the output in a new window, expects a refrence to the $fileList listbox
+sub runThroughStrings
+{
+	my $fileListBoxRef = $_[0];
+	#de-refrence
+	my $fileListBoxDeref = $$fileListBoxRef;
+	#curselection (cusor selection) returns an array in case multiple items are selected however, I only allow one item to be selected with this implementation -selectionmode?
+	my @cursorSelection = $fileListBoxDeref->curselection;
+	print "@cursorSelection\n";
+	
+	#The current directory being listed is always shown at the top of the fileList listbox, this is element 0 of the listbox
+	my $currentDirectory = $fileListBoxDeref->get(0);
+	print "got current directory $currentDirectory\n";
+	
+	my $targetFile = $fileListBoxDeref->get(0) . "/" . $fileListBoxDeref->get($cursorSelection[0]);
+	print "target file $targetFile\n";
+	
+	if (-f $targetFile)
+	{
+		print "is a file\n";
+		my $subWindow = $mw->Toplevel;
+		$subWindow->title("Strings Output of File: $targetFile");
+		#,-height => 10, -width => 125
+		my $stringsOutputWindow = $subWindow->Scrolled('Text')->pack(-fill => 'both');
+		my $stringsFindLabel = $subWindow->Entry(-width => 20)->pack();
+		$subWindow->Button(-text => "Find", -command => sub {
+			my $searchString = $stringsFindLabel->get;
+			#my $textFindAll = $stringsOutputWindow->FindAll(-regexp, -nocase, m/.+\$searchString.+/);
+			print "searc string: $searchString\n";
+			my $stdout = `strings $targetFile | grep $searchString`;
+			my $findStringsSubWindow = $mw->Toplevel;
+			my $stringsFindOutputWindow = $findStringsSubWindow->Scrolled('Text')->pack(-fill => 'both');
+			$findStringsSubWindow->Button(-text => "Close Window", -command => [$findStringsSubWindow => 'destroy'])->pack();
+			$stringsFindOutputWindow->insert('end', $stdout);
+
+
+
+		})->pack();
+		$subWindow->Button(-text => "Close Window", -command => [$subWindow => 'destroy'])->pack();
+		my $stdout = `strings $targetFile`;
+		$stringsOutputWindow->insert('end', $stdout);
+	}
+	#To prevent anything from happening if the user selects the divider line ------------------------ or the current directory path located at the top of the listbox
+	elsif($cursorSelection[0] == 1 | $cursorSelection[0] == 0)
+	{
+		my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "No valid file selected. Please select a file.\n");
+		$message->Show;
+	}
+	#Otherwise they probably selected a directory 
+	else
+	{
+		print "---$targetFile--nont of the above\n";
+		my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "$targetFile is a directory. Please select a file.\n");
+		$message->Show;
+	}
+	
+}
+
+#Runs a selected file from the file listbox through the strings command and shows the output in a new window, expects a refrence to the $fileList listbox
+sub runThroughHexdump
+{
+	my $fileListBoxRef = $_[0];
+	#de-refrence
+	my $fileListBoxDeref = $$fileListBoxRef;
+	#curselection (cusor selection) returns an array in case multiple items are selected however, I only allow one item to be selected with this implementation -selectionmode?
+	my @cursorSelection = $fileListBoxDeref->curselection;
+	print "@cursorSelection\n";
+	
+	#The current directory being listed is always shown at the top of the fileList listbox, this is element 0 of the listbox
+	my $currentDirectory = $fileListBoxDeref->get(0);
+	print "got current directory $currentDirectory\n";
+	
+	my $targetFile = $fileListBoxDeref->get(0) . "/" . $fileListBoxDeref->get($cursorSelection[0]);
+	print "target file $targetFile\n";
+	
+	if (-f $targetFile)
+	{
+		print "is a file\n";
+		my $subWindow = $mw->Toplevel;
+		$subWindow->title("Hexdump Output of File: $targetFile");
+		#,-height => 10, -width => 125
+		my $stringsOutputWindow = $subWindow->Scrolled('Text')->pack(-fill => 'both');
+		$subWindow->Button(-text => "Close Window", -command => [$subWindow => 'destroy'])->pack();
+		my $stdout = `hexdump -C $targetFile`;
+		$stringsOutputWindow->insert('end', $stdout);
+	}
+	#To prevent anything from happening if the user selects the divider line ------------------------ or the current directory path located at the top of the listbox
+	elsif($cursorSelection[0] == 1 | $cursorSelection[0] == 0)
+	{
+		my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "No valid file selected. Please select a file.\n");
+		$message->Show;
+	}
+	#Otherwise they probably selected a directory 
+	else
+	{
+		print "---$targetFile--nont of the above\n";
+		my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "$targetFile is a directory. Please select a file.\n");
+		$message->Show;
+	}
+	
+}
 
 #***********************************************************************************************************************************#
 #******Start of Commonly Used Subs to Make Life Better******************************************************************************#
