@@ -1,0 +1,7 @@
+# ESXimager
+Create secure digital forensic images of virtual machines running on VMware ESXi Hypervisors.
+
+The use of computer virtualization technologies has rapidly grown since the early 2000’s. Factors driving this growth include the ever-increasing utilization of cloud computing as well as benefits to consolidating physical hardware within a data center. In addition to the growth of virtualization technologies, computer security incidents are also increasing.  However, researchers have drawn attention to the problem that many of the traditional computer forensics tools and investigation techniques cannot be used to gather and analyze digital evidence obtained from virtualization technologies or cloud computing resources.
+
+To solve a part of this problem, I created a tool called ESXimager to securely acquire digital evidence from VMware ESXi hypervisors. The tool securely images selected virtual machine files running on VMware ESXi and ensures image integrity through the entire imaging process. Written in Perl and utilizing Tk, the tool makes use of an ESXi server’s ability to execute shell commands. Bit-stream copies are created using the dd command, image integrity is verified using the MD5 and SHA1 hashing algorithms, and images are securely transferred to an external imaging machine with SFTP. With a secure image created, a forensics investigator can load the image into a separate computer forensics tool for analysis. 
+
