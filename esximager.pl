@@ -1,5 +1,6 @@
 #!/usr/bin/perl
 use strict;
+#use warnings;
 use Tk;
 use Tk::ProgressBar;
 use Tk::MsgBox;
@@ -9,11 +10,12 @@ use Tk::Font;
 use Net::OpenSSH;
 use Net::SFTP::Foreign;
 use Data::Dumper;
+use Time::HiRes;
 
 ########################
 #ESXimager2.8.pl
 #Matt Tentilucci	
-#1-14-2014
+#2-22-2014
 #
 #V2.1 - Adding in user confirmation of VM choices and passing them back to sshToESXi sub, removing lots of misc. lines from debugging/trial and error
 #V2.2 - Redesign user selection of VMs window and switched from grid to pack geometry manager. Instead of having a sub window, 
@@ -36,6 +38,11 @@ use Data::Dumper;
 # the Tools->Verify Integrity menu button
 # Added in way to view an image files information, hash history, size, etc... view->file information
 #V2.8A - Removed unnecessary comments, removed unnecessary lines, condensed code = ~250 lines
+#V2.9A - Misc. spelling fixes, create case window now appears in middle of screen, changed dd to use bs=1M b/c the datastores default to 1M block sizes(Should find the 
+# block size by executing vmfstools --query -h /path/to/volume and parsing output)
+# Also since MD5 and SHA1 values are calculated, tried to give some indication as to which one is currently being calculated by slightly changing the window depending on which is being calculated 
+# Added in elapsed time it takes each operation to complete. Gives user about how long it takes to calculate hashes and for dd to complete. These times are displayed and logged
+# once the task has completed. Updating in real time would require forking of the dd and hash tasks which would require possibly major code changes this late 
 ########################
 
 #Before the config file is read and the desired log file location is determined, I want to log debug messages so I will utilize this array
@@ -70,7 +77,7 @@ push @debugMessages, logIt("[debug] (main) Done initilizing variables.",0,0,0);
 #Creates main window
 my $mw = MainWindow->new;
 push @debugMessages, logIt("[debug] (main) Creating MainWindow.",0,0,0);
-$mw->title("ESXimager 2.8");
+$mw->title("ESXimager 2.9");
 $mw->geometry("1400x600");
 
 #Create menu bar
@@ -481,6 +488,7 @@ sub confirmUserVMImageChoices
 			{
 				logIt("[info] ($currentCaseName) the following files will be imaged: @shortVMFileNames", 1, 1, 1);
 				my @fileNames;
+				my $startTime = time();
 				foreach(@VMsToImage)
 				{
 					#delete whatever is currently in the processing hash ref 
@@ -521,7 +529,11 @@ sub confirmUserVMImageChoices
 				#Maybe add more info to the "done" window
 				listFiles($currentCaseLocation);	
 				logIt("[info] ($currentCaseName) All imaging operations complete.", 1, 1, 1);
-				my $message = $mw->MsgBox(-title => "Info", -type => "ok", -icon => "info", -message => "Done!\n");
+				my $endTime = time();
+				my $outputTime = $endTime - $startTime;
+				logIt("[info] ($currentCaseName) Imaging process took $outputTime seconds", 1, 1, 1);
+				
+				my $message = $mw->MsgBox(-title => "Info", -type => "ok", -icon => "info", -message => "\tDone!\nImaging process took $outputTime seconds\n");
 				$message->Show;
 				#Return the vm selection window to what it was origionally in case user wants to image more VMs
 				findVMs();
@@ -549,7 +561,7 @@ sub ddTargetFile
 	my $fileSize = $ssh->capture("ls -lah $absolutePathFileToDD");
 	$fileSize = returnFileSize($fileSize);
 	my $subWindow = $mw->Toplevel;
-	$subWindow->title("(Step 1/5) Calculating MD5 and SHA1 Hashes");
+	$subWindow->title("(Step 1/5) Calculating *MD5* and SHA1 Hashes");
 	
 	########debugging window position  
 	my $mwx = $mw->x;
@@ -566,14 +578,33 @@ sub ddTargetFile
 	$subWindow->geometry("+$xpos+$ypos");
 
 	#Tells the user what is happening b/c they will not have control until they get to the SFTP step
-	$subWindow->Label(-text => "File: $absolutePathFileToDD\nSize: $fileSize\nCalculating MD5 and SHA1 hashes for $absolutePathFileToDD...\nThis may take some time depending on the file size, please be patient\n")->pack;
+	$subWindow->Label(-text => "File: $absolutePathFileToDD\nSize: $fileSize\nCalculating *MD5* hash for $absolutePathFileToDD...\nThis may take some time depending on the file size, please be patient\n")->pack;
 	$mw->update;
 
 	sleep(1);
 	
+	my $startTime = time();
 	my $md5 = calculateMD5HashOnESX($absolutePathFileToDD);
+	my $endTime = time();
+	my $outputTime = $endTime - $startTime;
+	chomp ($outputTime);
+	$subWindow->Label(-text => "MD5 calculation took: $outputTime seconds\n")->pack;
+	logIt("[info] ($currentCaseName) MD5 calcualtion of file $absolutePathFileToDD took $outputTime seconds", 1, 1, 1);
+	
+	#Try and give some idea when program is calculating each hash
+	$subWindow->title("(Step 1/5) Calculating MD5 and *SHA1* Hashes");
+	$subWindow->Label(-text => "File: $absolutePathFileToDD\nSize: $fileSize\nCalculating *SHA1* hash for $absolutePathFileToDD...\nThis may take some time depending on the file size, please be patient\n")->pack;
+	$mw->update;
+	sleep(2);
+	
+	$startTime = time();
 	my $sha1 = calculateSHA1HashOnESX($absolutePathFileToDD);
-
+	$endTime = time();
+	$outputTime = $endTime - $startTime;
+	chomp ($outputTime);
+	$subWindow->Label(-text => "SHA1 calculation took: $outputTime seconds\n")->pack;
+	logIt("[info] ($currentCaseName) SHA1 calcualtion of file $absolutePathFileToDD took $outputTime seconds", 1, 1, 1);
+	
 	#Done telling the user some info, destroy the sub window b/c we are about to create a new one with new info
 	$subWindow->destroy();
 
@@ -596,7 +627,13 @@ sub ddTargetFile
 
 	sleep(5);
 	
-	my $stdout = $ssh->capture("dd if=$absolutePathFileToDD of=$ddDestination");
+	$startTime = time();
+	my $stdout = $ssh->capture("dd if=$absolutePathFileToDD of=$ddDestination bs=1M");
+	$endTime = time();
+	$outputTime = $endTime - $startTime;
+	chomp ($outputTime);
+	$subWindow->Label(-text => "DD took: $outputTime seconds\n")->pack;
+	logIt("[info] ($currentCaseName) DD copy of file $absolutePathFileToDD took $outputTime seconds", 1, 1, 1);
 	
 	sleep(5);
 	
@@ -606,19 +643,39 @@ sub ddTargetFile
 	
 	sleep(1);
 	my $subWindow = $mw->Toplevel;
-	$subWindow->title("(Step 3/5) Calculating MD5 and SHA1 hashes after DD");
+	$subWindow->title("(Step 3/5) Calculating *MD5* and SHA1 hashes after DD");
 	
 	#Dont need to recalculate window position again b/c the main window should not have been moved. Just using values calculated from above
 	$subWindow->geometry("+$xpos+$ypos");
 	$fileSize = $ssh->capture("ls -lah $ddDestination");
 	$fileSize = returnFileSize($fileSize);
 	
-	$subWindow->Label(-text => "File: $ddDestination\nSize: $fileSize\nCalculating MD5 and SHA1 hashes for $ddDestination...\nThis may take some time depending on the file size, please be patient\n")->pack;
+	$subWindow->Label(-text => "File: $ddDestination\nSize: $fileSize\nCalculating *MD5* hash for $ddDestination...\nThis may take some time depending on the file size, please be patient\n")->pack;
 	$mw->update;
 	
 	my $pathToHash = $ddDestination;
+	$startTime = time();
 	my $md5Check = calculateMD5HashOnESX($pathToHash);
+	$endTime = time();
+	$outputTime = $endTime - $startTime;
+	chomp ($outputTime);
+	$subWindow->Label(-text => "MD5 calculation took: $outputTime seconds\n")->pack;
+	logIt("[info] ($currentCaseName) MD5 calcualtion of file $pathToHash took $outputTime seconds", 1, 1, 1);
+	
+	#Try and give some idea when program is calculating each hash
+	$subWindow->title("(Step 3/5) Calculating MD5 and *SHA1* hashes after DD");
+	$subWindow->Label(-text => "File: $ddDestination\nSize: $fileSize\nCalculating *SHA1* hash for $ddDestination...\nThis may take some time depending on the file size, please be patient\n")->pack;
+	$mw->update;
+	sleep(2);
+	
+	$startTime = time();
 	my $sha1Check = calculateSHA1HashOnESX($pathToHash);
+	$endTime = time();
+	$outputTime = $endTime - $startTime;
+	chomp ($outputTime);
+	$subWindow->Label(-text => "SHA1 calculation took: $outputTime seconds\n")->pack;
+	logIt("[info] ($currentCaseName) SHA1 calcualtion of file $pathToHash took $outputTime seconds", 1, 1, 1);
+	
 	$preMD5 = $md5Check;
 	$preSHA1 = $sha1Check;
 	logIt("[info] ($currentCaseName) Hashes of $pathToHash After DD:\n \tMD5: $md5Check\n \tSHA1: $sha1Check", 1, 1, 1);
@@ -664,6 +721,7 @@ sub sftpTargetFileImage
 	my $percentDone = 0;
 	my $subWindow = $mw->Toplevel;
 	$subWindow->title("(Step 4/5) Transfering image to local computer via SFTP");
+	my $startTime = time();
 	$subWindow->geometry("300x30");
 	
 	my $xpos = int((($mw->width - $subWindow->width) / 2) + $mw->x);
@@ -684,6 +742,10 @@ sub sftpTargetFileImage
 	$subWindow->destroy;
 	#With transfer complete, destroy the progress bar window
 	logIt("[info] ($currentCaseName) SFTP transfer complete.", 1, 1, 1);
+	my $endTime = time();
+	my $outputTime = $endTime - $startTime;
+	chomp ($outputTime);
+	logIt("[info] ($currentCaseName) SFTP transfer of file $fileToSFTP took $outputTime seconds", 1, 1, 1);
 	sleep(2);
 	
 	#get the file size locally
@@ -692,20 +754,40 @@ sub sftpTargetFileImage
 	
 	#Create subwindow to tell use the program is calculating hashes
 	my $subWindow = $mw->Toplevel;
-	$subWindow->title("(Step 5/5) Calculating MD5 and SHA1 hashes after SFTP transfer");
+	$subWindow->title("(Step 5/5) Calculating *MD5* and SHA1 hashes after SFTP transfer");
 	#Adjusts the sub window to appear in the middle of the main window
 	my $xpos = int((($mw->width - $subWindow->width) / 2) + $mw->x);
 	my $ypos = int((($mw->height - $subWindow->height) / 2) + $mw->y);
 	$subWindow->geometry("+$xpos+$ypos");
 	
 	#Tells the user what is happening b/c they will not have control while hashes are being calculated
-	$subWindow->Label(-text => "File: $localDestination\nSize: $fileSize\nCalculating MD5 and SHA1 hashes for $localDestination...\nThis may take some time depending on the file size, please be patient\n")->pack;
+	$subWindow->Label(-text => "File: $localDestination\nSize: $fileSize\nCalculating *MD5* hash for $localDestination...\nThis may take some time depending on the file size, please be patient\n")->pack;
 	$mw->update;
 	
 	logIt("[info] ($currentCaseName) Working on $localDestination", 1, 1, 1);
 	
+	$startTime = time();
 	my $md5Check = calculateMD5HashLocal($localDestination);
+	$endTime = time();
+	$outputTime = $endTime - $startTime;
+	chomp ($outputTime);
+	$subWindow->Label(-text => "MD5 calculation took: $outputTime seconds\n")->pack;
+	logIt("[info] ($currentCaseName) MD5 calcualtion of file $localDestination took $outputTime seconds", 1, 1, 1);
+	
+	#Try and give some idea when program is calculating each hash
+	$subWindow->title("(Step 5/5) Calculating MD5 and *SHA1* hashes after SFTP transfer");
+	$subWindow->Label(-text => "File: $localDestination\nSize: $fileSize\nCalculating *SHA1* hash for $localDestination...\nThis may take some time depending on the file size, please be patient\n")->pack;
+	$mw->update;
+	sleep(2);
+	
+	$startTime = time();
 	my $sha1Check = calculateSHA1HashLocal($localDestination);
+	$endTime = time();
+	$outputTime = $endTime - $startTime;
+	chomp ($outputTime);
+	$subWindow->Label(-text => "SHA1 calculation took: $outputTime seconds\n")->pack;
+	logIt("[info] ($currentCaseName) SHA1 calcualtion of file $localDestination took $outputTime seconds", 1, 1, 1);
+	
 	logIt("[info] ($currentCaseName) Hashes of $localDestination After SFTP Transfer:\n \tMD5: $md5Check\n \tSHA1: $sha1Check", 1, 1, 1);
 	$processingHashRef->{getLoggingTime() . " After SFTP transfer MD5"} = $md5Check;
 	$processingHashRef->{getLoggingTime() . " After SFTP transfer SHA1"} = $sha1Check;
@@ -755,7 +837,7 @@ sub checkImageIntegrity
 				my $fileSize = `ls -lah $absolutePath`;
 				$fileSize = returnFileSize($fileSize);
 				my $subWindow = $mw->Toplevel;
-				$subWindow->title("Calculating MD5 and SHA1 Hashes for Image Integrity Verification");
+				$subWindow->title("Calculating *MD5* and SHA1 Hashes for Image Integrity Verification");
 				
 				########debugging window position  
 				my $mwx = $mw->x;
@@ -771,13 +853,32 @@ sub checkImageIntegrity
 				$subWindow->geometry("+$xpos+$ypos");
 				
 				#Tells the user what is happening b/c they will not have control while files are being hashed
-				$subWindow->Label(-text => "File: $absolutePath\nSize: $fileSize\nCalculating MD5 and SHA1 hashes for $absolutePath...\nThis may take some time depending on the file size, please be patient\n")->pack;
+				$subWindow->Label(-text => "File: $absolutePath\nSize: $fileSize\nCalculating *MD5* hash for $absolutePath...\nThis may take some time depending on the file size, please be patient\n")->pack;
 				$mw->update;
 
 				sleep(1);
 				
+				my $startTime = time();
 				my $currentMD5Hash = calculateMD5HashLocal($absolutePath);
+				my $endTime = time();
+				my $outputTime = $endTime - $startTime;
+				chomp ($outputTime);
+				$subWindow->Label(-text => "MD5 calculation took: $outputTime seconds\n")->pack;
+				logIt("[info] ($currentCaseName) MD5 calcualtion of file $absolutePath took $outputTime seconds", 1, 1, 1);
+				
+				#Try and give some idea when program is calculating each hash
+				$subWindow->title("Calculating MD5 and *SHA1* Hashes for Image Integrity Verification");
+				$subWindow->Label(-text => "File: $absolutePath\nSize: $fileSize\nCalculating *SHA1* hash for $absolutePath...\nThis may take some time depending on the file size, please be patient\n")->pack;
+				$mw->update;
+				sleep(2);
+				
+				$startTime = time();
 				my $currentSHA1Hash = calculateSHA1HashLocal($absolutePath);
+				$endTime = time();
+				$outputTime = $endTime - $startTime;
+				chomp ($outputTime);
+				$subWindow->Label(-text => "SHA1 calculation took: $outputTime seconds\n")->pack;
+				logIt("[info] ($currentCaseName) SHA1 calcualtion of file $absolutePath took $outputTime seconds", 1, 1, 1);
 				
 				#Done telling the user some info, destroy the sub window b/c we are about to create a new one with new info
 				$subWindow->destroy();
@@ -948,6 +1049,7 @@ sub suspendVM
 				my $lineToPrint = getLoggingTime() . " [info] ($currentCaseName) Suspending VM...";
 				print PROGRAMLOGFILE $lineToPrint;
 				print $currentCaseLog $lineToPrint;
+				print DEBUGLOGFILE $lineToPrint;
 				$consoleLog->insert('end', $lineToPrint);
 				$consoleLog->see('end');
 						
@@ -970,6 +1072,7 @@ sub suspendVM
 					
 					print PROGRAMLOGFILE ".";
 					print $currentCaseLog ".";
+					print DEBUGLOGFILE ".";
 					print ".";
 					
 					$text = $text . ".";
@@ -979,6 +1082,7 @@ sub suspendVM
 				}
 				print PROGRAMLOGFILE "Done!\n";
 				print $currentCaseLog "Done!\n";
+				print DEBUGLOGFILE "Done!\n";
 				print "Done!\n";
 				logIt("[info] $vmxPath suspended.", 1,1,1);
 				$subWindow->destroy();
