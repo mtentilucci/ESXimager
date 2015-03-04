@@ -1,14 +1,17 @@
 #!/usr/bin/perl
 use strict;
 use Tk;
+use Tk::ProgressBar;
 #use Tk::Text;
 use Net::OpenSSH;
+use Net::SFTP::Foreign;
 
 ########################
-#ESXimager2.0.pl
+#ESXimager2.1.pl
 #Matt Tentilucci	
-#10-22-2014
+#10-23-2014
 #
+#V2.1 - Adding in user confirmation of VM choices and passing them back to sshToESXi sub, removing lots of misc. lines from debugging/trial and error
 ########################
 
 #variable so ssh session to esxi can be accessible outside of sub
@@ -115,9 +118,11 @@ sub sshToESXi
 	my $password = $_[2];
 	
 	$consoleLog->insert('end', "\n*Connection to $ip...");
+	$mw->update;
 	$ssh = Net::OpenSSH->new("$user:$password\@$ip", master_opts => [ -o => "StrictHostKeyChecking=no"]);
 	$ssh->error and die "Could not connect to $ip" . $ssh->error;
 	$consoleLog->insert('end', "done!\n");
+	$mw->update;
 	
 	#my $stdout = $ssh->capture("ls -l /vmfs/volumes/");
 	#$consoleLog->insert('end', $stdout);
@@ -145,66 +150,252 @@ sub findVMs
 	my $stdout = $ssh->capture("find $vmstore -name \"*.vmx\"");
 	@vmxFound = split(/\s+/, $stdout);
 	
-	#my %vmSelectionHash = ();
-	#my %checkButtonHash = ();
 	my @checkButtons;
 	my @checkButtonValues;
 	my $counter = 0;
 	
-	# # my $var1;
-	# # my $var2;
-	# # my $var3;
-	
-	# # my $vars1 = $checkFrame->Checkbutton(-text => $vmxFound[0],
-									# # -variable => $var1,
-									# # -onvalue => 'CHECKED',
-                                    # # -offvalue => 'NOT CHECKED')->pack();
-	# # my $vars2 = $checkFrame->Checkbutton(-text => $vmxFound[1],
-									# # -variable => $var2,
-									# # -onvalue => 'CHECKED',
-									# # -offvalue => 'NOT CHECKED')->pack();
-	# # my $vars3 = $checkFrame->Checkbutton(-text => $vmxFound[2],
-									# # -variable => $var3,
-									# # -onvalue => 'CHECKED',
-									# # -offvalue => 'NOT CHECKED')->pack();
-									
-	# # print "$var1 $var2 $var3";
-	
+	#Creates check buttons depending on how many VMs are found on the server
 	foreach(@vmxFound)
 	{
-		#$checkButtons[$counter] = 'Not Checked';
-		#$checkFrame->Checkbutton(-text => $_)->pack();
+		$checkButtonValues[$counter] = '0';
 		$checkButtons[$counter] = $checkFrame->Checkbutton(-text => $_,
 									-onvalue => $_,
                                     -offvalue => '0',
 									-variable => \$checkButtonValues[$counter])->pack();
 		$counter++;
 	}
-	$consoleLog->insert('end', "After checkbox creation\n");
+	
+	#Creates ok and cancel button to approve VM selections
 	my $buttonFrame = $subWindow->Frame()->pack(-side => "bottom");
 	my $okButton = $buttonFrame->Button(-text => 'OK',
-                                       -command => sub
-													{
-														$consoleLog->insert('end', "running sub\n");
-														foreach(@checkButtonValues)
-														{
-															$consoleLog->insert('end', "$_\n");
-														}
-														#foreach my $key ( sort( keys( %vmSelectionHash ) ) ) 
-														#{
-														#	#print "Key: $key Value:$vmSelectionHash{$key} \n";
-														#	$consoleLog->insert('end', "Key: $key Value:$vmSelectionHash{$key} \n");
-														#}
-													}
+                                       -command => [\&confirmUserVMImageChoices, \@checkButtonValues]
 									   )->pack(-side => "left");
-	$consoleLog->insert('end', "After button creation\n");
-	#foreach my $key ( sort( keys( %vmSelectionHash ) ) ) 
-	#{
-		#print "Key: $key Value:$vmSelectionHash{$key} \n";
-	#	$consoleLog->insert('end', "Key: $key Value:$vmSelectionHash{$key} \n");
-	#}
-	$consoleLog->insert('end', "After hash print creation\n");
+	my $cancelButton = $buttonFrame->Button(-text => "Cancel", -command => [$subWindow => 'destroy'])->pack();
 }
+
+#Confirms the users choices for which VMs they wish to acquire
+sub confirmUserVMImageChoices
+{
+	my $choicesRef = shift; #$_[0];
+	my @VMsToImage;
+	foreach(@$choicesRef)
+	{
+		
+		#$consoleLog->insert('end',"**Working on --$_--\n");
+		if($_ ne '0')
+		{
+			#$consoleLog->insert('end',"**--$_-- is not 0\n");
+			push @VMsToImage, $_;
+		}
+		else
+		{
+			#$consoleLog->insert('end',"**--$_-- is 0\n");
+		}
+	}
+	my @shortVMNames;
+	foreach(@VMsToImage)
+	{
+		push @shortVMNames, "\n" .  getFileName($_);
+	}
+	#my $msgBox = $mw->MsgBox(-title => "Test", -type => "yesno", -icon => "question", -message => "Would you like to image the following VMs?: @shortVMNames");
+	#$msgBox->Show;
+	my $messageBoxAnswer = $mw->messageBox(-title => "Test", -type => "YesNo", -icon => "question", -message => "Would you like to image the following VMs?: @shortVMNames", -default => "yes");
+	#my $messageBoxAnswer => $mw->Dialog(-title => "Test", -bitmap => "question", -text => "Would you like to image the following VMs?: @shortVMNames", -buttons => ['Yes', 'No'], -default_button => "Yes");
+	$consoleLog->insert('end',"**Message box answer: --$messageBoxAnswer--\n");
+	if ($messageBoxAnswer eq 'Yes')
+	{
+		$consoleLog->insert('end',"**Message box answer $messageBoxAnswer was yes\n");
+		#$subWindow->destroy;
+		foreach(@VMsToImage)
+		{
+			$consoleLog->insert('end',"Working on $_\n");
+			my $targetImageFile = ddTargetFile($_, getFileName($_));
+			#print "Going to SFTP $targetImageFile to this computer\n";
+			my $ip = $ESXip->get;
+			$consoleLog->insert('end',"Going to SFTP $targetImageFile to this computer from esxi server at IP $ip\n");
+			$mw->update;
+			sftpTargetFileImage($ip,$targetImageFile);
+		}
+	}
+	else
+	{
+		$consoleLog->insert('end',"**Message box answer $messageBoxAnswer was no\n");
+	}
+}
+
+#DD target VMs, expects the absolute path and the filename 
+sub ddTargetFile
+{
+
+	#!!check to see if ddimages directory exists!! figure out later
+	#print "\n\n---------------------------\nCreating DD copy of target file\n";
+	my $absolutePathFileToDD = $_[0];
+	my $fileToDD = $_[1];
+	my $fileToDDDestinationName  = $fileToDD;
+	$fileToDDDestinationName =~ s/vmx/dd/;
+	#print "dd destination name $fileToDDDestinationName\n";
+	#my @fileToDDSplit = split('.',$fileToDD);
+
+#print "0 ". $fileToDDSplit[0] . "1 " . $fileToDDSplit[1] . "\n";
+	my $ddDestination = "/vmfs/volumes/datastore1/ddimages" . "/" . $fileToDDDestinationName;
+#print "dd dest $ddDestination\n";
+#my $s=<STDIN>;
+	my $md5 = calculateMD5HashOnESX($absolutePathFileToDD);
+	my $sha1 = calculateSHA1HashOnESX($absolutePathFileToDD);
+
+	#print "Hashes Before DD:\n \tMD5: $md5\n \tSHA1: $sha1\n";
+	$consoleLog->insert('end',"Hashes Before DD:\n \tMD5: $md5\n \tSHA1: $sha1\n");
+	$mw->update;
+	sleep(1);
+
+	my $stdout = $ssh->capture("dd if=$absolutePathFileToDD of=$ddDestination");
+	
+	my $pathToHash = $ddDestination;
+	my $md5Check = calculateMD5HashOnESX($pathToHash);
+	my $sha1Check = calculateSHA1HashOnESX($pathToHash);
+	#print "Hashes After DD:\n \tMD5: $md5Check\n \tSHA1: $sha1Check\n";
+	$consoleLog->insert('end',"Hashes After DD:\n \tMD5: $md5Check\n \tSHA1: $sha1Check\n");
+	$mw->update;
+	sleep(1);
+	return $pathToHash;
+
+}
+
+#SFTP target VMs, expects esxi server IP and absolute path to target dd file
+sub sftpTargetFileImage
+{
+	my $serverIP = $_[0];
+	my $fileToSFTP = $_[1];
+
+	my %args; #= ( user => 'root',password => 'netsys01');
+
+	my $user = $username->get;
+	#$consoleLog->insert('end', "$user\n");
+	my $password = $password->get;
+	my $host= '192.168.100.141';
+	$consoleLog->insert('end', "Going to connect to $serverIP with credeitials $user and $password\n");
+	$mw->update;
+	my $sftp = Net::SFTP::Foreign->new($serverIP,  user => $user, password => $password);
+	$sftp->die_on_error("SSH Connection Failed");
+	
+	my @filePathParts2 = split('/', $fileToSFTP);
+	my $getFileName2 = pop(@filePathParts2);
+	
+	my $localDestination = "/home/matt/Desktop/" . $getFileName2;
+	#print "This file will SFTP from $fileToSFTP to $localDestination\n";
+	#my $f=<STDIN>;
+
+	#Create progress bar to show user program is doing something
+	my $percentDone = 0;
+	my $subWindow = $mw->Toplevel;
+	$subWindow->title("Transfering Image");
+	$subWindow->geometry("300x30");
+	my $progressBar = $subWindow->ProgressBar(-width => 30, -blocks => 50, -from => 0, -to => 100, -variable => \$percentDone)->pack(-fill => 'x');
+	
+	$sftp->get($fileToSFTP,$localDestination, callback => sub {
+		my ($sftp, $data, $offset, $size) = @_;
+		print "$offset of $size bytes read\n";
+		$percentDone = ($offset / $size) * 100;
+		$subWindow->update;
+	
+	}); #or die "File transfer failed\n";
+	$subWindow->destroy;
+	#With transfer complete, destroy the progress bar window
+	
+	my $md5Check = calculateMD5HashLocal($localDestination);
+	my $sha1Check = calculateSHA1HashLocal($localDestination);
+	#print "Hashes After DD:\n \tMD5: $md5Check\n \tSHA1: $sha1Check\n";
+	$consoleLog->insert('end',"Hashes After DD:\n \tMD5: $md5Check\n \tSHA1: $sha1Check\n");
+	sleep(1);
+
+}
+
+#***********************************************************************************************************************************#
+#******Start of Commonly Used Subs to Make Life Better******************************************************************************#
+#***********************************************************************************************************************************#
+
+#Sub is passed long absolute path of a file and returns the file name and extenstion
+#ex. sub is passed /var/storage/foo/bar.vmx and returns bar.vmx
+sub getFileName
+{
+	my $absolutePath = $_[0];
+	my $fileName;
+
+	my @fileNameParts = split('/',$absolutePath);
+	$fileName = pop @fileNameParts;
+	return $fileName;
+}
+
+#Calculate MD5 hash of file about to be copied on ESX server
+sub calculateMD5HashOnESX
+{
+	my $fileToHash = $_[0];
+	
+	#print "*Calculating md5 hash this may take a while be patient...";
+	$consoleLog->insert('end',"*Calculating md5 hash this may take a while be patient...");
+	my $stdout = $ssh->capture("md5sum $fileToHash");
+	#print "done!\n";
+	$consoleLog->insert('end',"done!\n");
+	chomp $stdout;
+	return $stdout;   
+}
+
+# Calculate SHA1 hash of the file about to be copied on ESX server
+sub calculateSHA1HashOnESX
+{
+	my $fileToHash = $_[0];
+	
+	#print "*Calculating sha1 hash this may take a while be patient...";
+	$consoleLog->insert('end',"Calculating sha1 hash this may take a while be patient...");
+	my $stdout = $ssh->capture("sha1sum $fileToHash");
+	#print "done!\n";
+	$consoleLog->insert('end',"done!\n");
+	chomp $stdout;
+	return $stdout;   
+}
+
+#Calculate MD5 hash of local file
+sub calculateMD5HashLocal
+{
+	my $fileToHash = $_[0];
+	
+	#print "*Calculating md5 hash this may take a while be patient...";
+	$consoleLog->insert('end',"*Calculating md5 hash this may take a while be patient...");
+	my $stdout = `md5sum $fileToHash`;
+	#$stdout = $ssh->capture("md5sum $fileToHash");
+	#print "done!\n";
+	$consoleLog->insert('end',"done!\n");
+	chomp $stdout;
+	return $stdout;   
+}
+
+# Calculate SHA1 hash of local file
+sub calculateSHA1HashLocal
+{
+	my $fileToHash = $_[0];
+	
+	#print "*Calculating sha1 hash this may take a while be patient...";
+	$consoleLog->insert('end',"*Calculating sha1 hash this may take a while be patient...");
+	my $stdout = `sha1sum $fileToHash`;
+	#$stdout = $ssh->capture("sha1sum $fileToHash");
+	#print "done!\n";
+	$consoleLog->insert('end',"done!\n");
+	chomp $stdout;
+	return $stdout;   
+}
+
+#***********************************************************************************************************************************#
+#******End of Commonly Used Subs to Make Life Better********************************************************************************#
+#***********************************************************************************************************************************#
+
+# # # sub
+# # # {
+	# # # foreach(@checkButtonValues)
+	# # # {
+		# # # $consoleLog->insert('end', "$_\n");
+	# # # }
+	
+# # # }
 
 sub foo
 {
