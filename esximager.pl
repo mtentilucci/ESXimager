@@ -8,7 +8,7 @@ use Net::OpenSSH;
 use Net::SFTP::Foreign;
 
 ########################
-#ESXimager2.2.pl
+#ESXimager2.3.pl
 #Matt Tentilucci	
 #11-4-2014
 #
@@ -16,6 +16,7 @@ use Net::SFTP::Foreign;
 #V2.2 - Redesign user selection of VMs window and switched from grid to pack geometry manager. Instead of having a sub window, 
 # there will be a frame within main window that will be updated with the VM choices for the user to image. This should be a much
 # cleaner look and prevent multiple windows from popping up. Also added configuration file and Tools->Settings menu bar for editing it
+#V2.3 - Added in menu item to open an existing case
 ########################
 
 #variable so ssh session to esxi can be accessible outside of sub
@@ -31,7 +32,7 @@ my $currentCaseLocation;
 
 #Creates main window
 my $mw = MainWindow->new;
-$mw->title("ESXimager 2.2");
+$mw->title("ESXimager 2.3");
 #$mw->geometry("600x600");
 
 #Create menu bar
@@ -41,6 +42,7 @@ my $tools = $menubar->cascade(-label => '~Tools');
 my $help = $menubar->cascade(-label => '~Help');
 
 $file->command(-label => 'New Case', -underline => 0, -command => \&createNewCase);
+$file->command(-label => 'Open Case', -underline => 0, -command => \&openExistingCase);
 $file->separator;
 $file->command(-label => "Quit", -underline => 0, -command => \&exit);
 
@@ -52,36 +54,34 @@ my $consoleLog = $mw->Text(-height => 10, -width => 125)->pack(-side => 'bottom'
 #Creates a label in the top left display the case currently "open"
 my $caseLabel = $mw->Label(-text => "Current Case: $currentCaseName Location: $currentCaseLocation")->pack;#(-side => 'left', -anchor => 'nw');
 
+##Connection Frame##
 #Create top left frame for holding username, password, server IP, connect button widgets
 my $connectionFrame = $mw->Frame(-borderwidth => 2, -relief => 'groove');
 $connectionFrame->pack(-side => 'left', -anchor => 'nw');
-
 #label for IP
 $connectionFrame->Label(-text => "Server IP")->pack;
-	
 #entry for IP
 my $ESXip = $connectionFrame->Entry( -width => 20, -text => "172.16.150.128")->pack;
-
 #Label for user
 $connectionFrame->Label(-text => "Username")->pack;
-
 #entry for user
 my $username = $connectionFrame->Entry( -width => 20,  -text => "root")->pack;
-
 #label for pass
 $connectionFrame->Label(-text => "Password")->pack;
-
 #entry for pass
 my $password = $connectionFrame->Entry( -width => 20, -show => "*",  -text => "Thewayiam10107")->pack;
-
 #connect button, first calls sub to do input sanitization and checking on ip, username, and password boxes then 
 #either falls out with an error, or another sub is called to connect to the ESXi server
 $connectionFrame->Button(-text => "Connect", -command => \&sanitizeInputs )->pack;	
+##End Connection Frame##
 	
+
+##VM Choices Frame##
 my $vmChoicesFrame = $mw->Frame(-borderwidth => 2, -relief => 'groove');
 $vmChoicesFrame->pack(-side => 'right', -fill => 'both');
 #$vmChoicesFrame->Label(-text => "Connect to an ESXi server")->pack;
-	
+##EndVM Choices Frame##
+
 #$consoleLog->insert('end',"\nfoo");
 checkOS();
 readConfigFile();
@@ -545,6 +545,21 @@ sub createNewCase
 	my $cancelButton = $createCaseWindowBottomFrame->Button(-text => "Exit", -command => [$createCaseWindow => 'destroy'])->pack(-side => "left");
 }
 
+#Allows user to open existing case, brings up a popup direcoty navigation window to allow the user to select the case they want to open
+sub openExistingCase
+{
+	#my $filename = $mw->getOpenFile(-initialdir=>$ESXiCasesDir);
+	##More work to be done here
+	my $directory = $mw->chooseDirectory(-initialdir=>$ESXiCasesDir, -title => "Select a case to open");
+	$currentCaseLocation = $directory;
+	$currentCaseName = getFileName($currentCaseLocation);
+	my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "current case name: --$currentCaseName-- dir: --$currentCaseLocation--n");
+		$message->Show;
+	$consoleLog->insert('end', "Opened an existing case: $currentCaseName Location: $currentCaseLocation\n");
+	$caseLabel->configure(-text => "Current Case: $currentCaseName Location: $currentCaseLocation");
+	
+
+}
 #***********************************************************************************************************************************#
 #******Start of Commonly Used Subs to Make Life Better******************************************************************************#
 #***********************************************************************************************************************************#
