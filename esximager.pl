@@ -11,7 +11,7 @@ use Net::OpenSSH;
 use Net::SFTP::Foreign;
 
 ########################
-#ESXimager2.6.pl
+#ESXimager2.7.pl
 #Matt Tentilucci	
 #12-6-2014
 #
@@ -29,9 +29,15 @@ use Net::SFTP::Foreign;
 # After the image has been dd'd and SFTP'd the script will cleanup the .dd files is created on the ESXi server
 # Made the checkbutton frame scrolled when user has to select what vms/files they want to image
 #V2.6 - Integrating buttons into file listing listbox to put selected file through strings and hexdump -C. Case names will not allow spaces, will =~ s/ //;
-#
+#V2.7 - Improved logging capabilities. Added Overall log file to keep track if everything, added case log file that keeps track of things related to a praticular case
+# created logIt sub to simpfily logging since log messages need to go to multiple places
 ########################
 
+#Before the config file is read and the desired log file location is determined, I want to log debug messages so I will utilize this array
+my @debugMessages;
+
+push @debugMessages, logIt("[debug] (main) Program opened.",0,0,0);
+push @debugMessages, logIt("[debug] (main) Initilizing some variables.",0,0,0);
 #variable so ssh session to esxi can be accessible outside of sub
 my $ssh;
 my $checkFrame1;
@@ -46,13 +52,18 @@ my $ESXiCasesDir;
 my $logFileDestination;
 my $currentCaseName = "No Case Opened Yet";
 my $currentCaseLocation;
+my $currentCaseLog;
+
+push @debugMessages, logIt("[debug] (main) Done initilizing variables.",0,0,0);
 
 #Creates main window
 my $mw = MainWindow->new;
-$mw->title("ESXimager 2.6");
+push @debugMessages, logIt("[debug] (main) Creating MainWindow.",0,0,0);
+$mw->title("ESXimager 2.7");
 $mw->geometry("1400x600");
 
 #Create menu bar
+push @debugMessages, logIt("[debug] (main) Creating menu bar.",0,0,0);
 $mw->configure(-menu => my $menubar = $mw->Menu);
 my $file = $menubar->cascade(-label => '~File');
 my $tools = $menubar->cascade(-label => '~Tools');
@@ -69,10 +80,12 @@ $tools->command(-label => "Settings", -command => \&editSettings);
 #console window
 #Anytime print is used, it will output to the $consoleLog window
 #my $consoleLog = $mw->Text(-height => 10, -width => 125)->pack(-side => 'bottom', -fill => 'both');
+push @debugMessages, logIt("[debug] (main) Creating ConsoleLog window.",0,0,0);
 my $consoleLog = $mw->Scrolled('Text',-height => 10, -width => 125)->pack(-side => 'bottom', -fill => 'both');
 tie *STDOUT, 'Tk::Text', $consoleLog->Subwidget('scrolled');
 
 ##Connection Frame##
+push @debugMessages, logIt("[debug] (main) Creating Connection Frame.",0,0,0);
 #Create top left frame for holding username, password, server IP, connect button widgets
 my $connectionFrame = $mw->Frame(-borderwidth => 2, -relief => 'groove');
 $connectionFrame->pack;#(-side => 'left', -anchor => 'nw');
@@ -99,9 +112,11 @@ my $caseLabel = $mw->Label(-text => "$currentCaseName. You must open a case befo
 
 
 ##Dir File Frame##	
+push @debugMessages, logIt("[debug] (main) Creating Dir File Frame.",0,0,0);
 my $dirFileFrame = $mw->Frame(-borderwidth => 2, -relief => 'groove');
 $dirFileFrame->pack(-side => 'right', -fill => 'both');
 ###Dir Tree Frame##
+push @debugMessages, logIt("[debug] (main) Creating Dir Tree Frame.",0,0,0);
 my $dirTreeFrame = $dirFileFrame->Frame(-borderwidth => 2, -relief => 'groove');
 $dirTreeFrame->pack(-side => 'left', -fill => 'both');
 #my $dirTreeLabel = $dirTreeFrame->Label(-text => "Directory listing of open case:\nOpen a case to populate\n")->pack;
@@ -109,6 +124,7 @@ $dirTreeFrame->pack(-side => 'left', -fill => 'both');
 my $dirTree = $dirTreeFrame->Scrolled('DirTree', -scrollbars => 'e', -directory => $ESXiCasesDir, -width => 35, -height => 20, -browsecmd => \&listFiles)->pack(-side => 'left',  -anchor => 'n', -fill => 'both');
 ###End Dir Tree Frame##
 ###File List Frame##
+push @debugMessages, logIt("[debug] (main) Creating File List Frame.",0,0,0);
 my $fileListFrame = $dirFileFrame->Frame(-borderwidth => 2, -relief => 'groove');
 $fileListFrame->pack(-side => 'right', -fill => 'both');
 my $fileList = $fileListFrame->Scrolled('Listbox', -scrollbars => 'e', -width => 40, -height => 15)->pack(-side => 'top',  -anchor => 'n', -fill => 'both', -expand => 1);
@@ -120,6 +136,7 @@ my $hexdumpButton = $fileListFrame->Button(-text => "Hexdump", -command => [\&ru
 ##End Dir Tree Frame##
 
 ##VM Choices Frame##
+push @debugMessages, logIt("[debug] (main) Creating VM Choices Frame.",0,0,0);
 my $vmChoicesFrame = $mw->Frame(-borderwidth => 2, -relief => 'groove');
 $vmChoicesFrame->pack(-side => 'left', -fill => 'both', -expand => 1);
 my $vmChoicesLabel = $vmChoicesFrame->Label(-text => "Connect to an ESXi server to populate\n")->pack;
@@ -127,10 +144,32 @@ my $vmChoicesLabel = $vmChoicesFrame->Label(-text => "Connect to an ESXi server 
 
 $consoleLog->see('end');
 
-
+push @debugMessages, logIt("[debug] (main) Done creating Main Window.",0,0,0);
 #$consoleLog->insert('end',"\nfoo");
 checkOS();
 readConfigFile();
+
+#In addition to opening the program log file, we can open and print out everything to our debug log file
+my $debugLogLocation = $logFileDestination;
+$debugLogLocation =~ s/\.log/Debug\.log/;
+open (DEBUGLOGFILE, ">>$debugLogLocation");
+{ my $ofh = select DEBUGLOGFILE;
+  $| = 1;
+  select $ofh;
+}
+foreach(@debugMessages)
+{
+	print DEBUGLOGFILE $_
+}
+#With the config file read, we now know where the ovarall $logFileDestination is so we can open a file handle
+open (PROGRAMLOGFILE, ">>$logFileDestination");
+#Make file handle 'hot' so lines don't get buffered before printing http://perl.plover.com/FAQs/Buffering.html
+{ my $ofh = select PROGRAMLOGFILE;
+  $| = 1;
+  select $ofh;
+}
+#print PROGRAMLOGFILE getLoggingTime() ." [info] (main) Initilized... GREETINGS PROGESSOR FALKEN.\n";
+logIt("[info] (main) Initilized... GREETINGS PROGESSOR FALKEN.", 1, 0, 1);
 
 #Reads the configuration file for this program. It looks in /home/user/ESXimager/ESXimager.cfg
 #If it does not find a config file it will prompt the user to create one, bringing them to the 
@@ -141,9 +180,11 @@ sub readConfigFile
 	#if config file exists
 	if (-e $expectedConfigFileLoc)
 	{
+		push @debugMessages, logIt("[debug] (main) Found config file in expected location, here: $expectedConfigFileLoc.",0,0,0);
 		#my $error = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "The config file does exist");
 		#$error->Show;
 		open (CONFIGFILE, $expectedConfigFileLoc); 
+		push @debugMessages, logIt("[debug] (main) Reading config file.",0,0,0);
 		while(<CONFIGFILE>)
 		{
 			chomp($_);
@@ -152,12 +193,14 @@ sub readConfigFile
 				my @configFileSplit = split(/=/);
 				chomp($configFileSplit[1]);
 				$ESXiWorkingDir = $configFileSplit[1];
+				push @debugMessages, logIt("[debug] (main) Setting ESXi Working Dir to: $ESXiWorkingDir.",0,0,0);
 			}
 			elsif($_ =~ m/CaseDir=.+/)
 			{
 				my @configFileSplit = split(/=/);
 				chomp($configFileSplit[1]);
 				$ESXiCasesDir = $configFileSplit[1];
+				push @debugMessages, logIt("[debug] (main) Setting ESXi cases directory to: $ESXiCasesDir.",0,0,0);
 				$dirTree->chdir($ESXiCasesDir);
 				listFiles($ESXiCasesDir);
 			}
@@ -166,9 +209,11 @@ sub readConfigFile
 				my @configFileSplit = split(/=/);
 				chomp($configFileSplit[1]);
 				$logFileDestination = $configFileSplit[1];
+				push @debugMessages, logIt("[debug] (main) Setting log file destination to: $logFileDestination.",0,0,0);
 			}
 			else
 			{
+				push @debugMessages, logIt("[debug] (main) Misformated Config file, dont know what $_ is.",0,0,0);
 				$consoleLog->insert('end', "Misformated Config file, dont know what $_ is\n");
 				$consoleLog->see('end');
 			}
@@ -181,6 +226,7 @@ sub readConfigFile
 		#my $error = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "The config file does not exist");
 		#$error->Show;
 		#$consoleLog->insert('end',"config file does not exist\n");
+		push @debugMessages, logIt("[debug] (main) No config file could be located. Going to create config file.",0,0,0);
 		my $message = $mw->MsgBox(-title => "Info", -type => "ok", -icon => "info", -message => "It appears this is the first time you are running this program, a configuration file could not be located. The following window will allow you to create a configuration file.");
 		$message->Show;
 		editSettings();
@@ -196,8 +242,9 @@ sub sanitizeInputs
 	my $user = $username->get;
 	#$consoleLog->insert('end', "$user\n");
 	my $password = $password->get;
-	$consoleLog->insert('end', "$ip $user $password\n");
-	$consoleLog->see('end');
+	logIt("[info] (main) Sanatizing inputs...", 1, 0, 1);
+	#$consoleLog->insert('end', "$ip $user $password\n");
+	#$consoleLog->see('end');
 	
 	my $validInput = 0;
 	
@@ -206,6 +253,7 @@ sub sanitizeInputs
 	{ $validInput++; }
 	else
 	{
+		logIt("[error] (main) Please enter a valid ip address.", 1, 0, 1);
 		my $error = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "Please enter a valid ip address.");
 		$error->Show;
 		#print "Enter a valid ip address. ex. 192.168.0.1\n\n";
@@ -215,6 +263,7 @@ sub sanitizeInputs
 	{ $validInput++; }
 	else
 	{
+		logIt("[error] (main) Please enter a username.", 1, 0, 1);
 		my $error = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "Please enter a username.");
 		$error->Show;
 	}
@@ -223,6 +272,7 @@ sub sanitizeInputs
 	{ $validInput++; }
 	else
 	{
+		logIt("[error] (main) Please enter a password.", 1, 0, 1);
 		my $error = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "Please enter a password.");
 		$error->Show;
 	}
@@ -230,6 +280,7 @@ sub sanitizeInputs
 	#Calls sub to connect only if input validation has passed
 	if($validInput == 3)
 	{
+		logIt("[info] (main) Done sanatizing inputs.", 1, 0, 1);
 		sshToESXi($ip, $user, $password)
 		#$consoleLog->insert('end',"going to try and connect\n");
 	}
@@ -242,19 +293,30 @@ sub sshToESXi
 	my $user = $_[1];
 	my $password = $_[2];
 	
-	$consoleLog->insert('end', "\n*Connection to $ip...");
+	#$consoleLog->insert('end', "\n*Connection to $ip...");
+	logIt("[info] (main) Attempting to connect to ESXi server at $ip...", 1, 0, 1);
 	$mw->update;
 	$ssh = Net::OpenSSH->new("$user:$password\@$ip", master_opts => [ -o => "StrictHostKeyChecking=no"]);
-	$ssh->error and die "Could not connect to $ip" . $ssh->error;
-	$consoleLog->insert('end', "done!\n");
-	$consoleLog->see('end');
-	$mw->update;
-	
-	#my $stdout = $ssh->capture("ls -l /vmfs/volumes/");
-	#$consoleLog->insert('end', $stdout);
-	
-	#Are all vm's stored here? Investigate what path is used for each esxi host for iscsi or VMs on a SAN
-	findVMs("/vmfs/volumes/", $ip);
+	#$ssh->error and die "Could not connect to $ip" . $ssh->error;
+	#$consoleLog->insert('end', "done!\n");
+	#$consoleLog->see('end');
+	if(!$ssh->error)
+	{
+		logIt("[info] (main) Succesfully connected to $ip", 1, 0, 1);
+		$mw->update;
+		
+		#my $stdout = $ssh->capture("ls -l /vmfs/volumes/");
+		#$consoleLog->insert('end', $stdout);
+		
+		#Are all vm's stored here? Investigate what path is used for each esxi host for iscsi or VMs on a SAN
+		findVMs("/vmfs/volumes/", $ip);
+	}
+	else
+	{
+		logIt("[error] (main) Failed to connect to $ip " . $ssh->error, 1, 0, 1);
+		my $error = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "Failed to connect to $ip " . $ssh->error);
+		$error->Show;
+	}
 }
 
 #Step 1: $checkFrame1 and $buttonFrame1 - find VMs on ESXi server and allows the user to select which VM(s) they want to image
@@ -318,6 +380,7 @@ sub selectVMFiles
 	my @vmsToRestart;
 	if($currentCaseName =~ m/No Case Opened Yet/)
 	{
+		logIt("[error] (main) A case has not yet been opened. Open a case before imaging a VM.", 1, 0, 1);
 		my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "A case has not yet been opened. Open a case before imaging a VM.\n");
 		$message->Show;
 	}
@@ -340,7 +403,8 @@ sub selectVMFiles
 		}
 		my $count = @findVMFiles;
 		if ($count == 0)
-		{
+		{	
+			logIt("[error] ($currentCaseName) No VM's were selected to be imaged.", 1, 1, 1);
 			my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "No VM's were selected to be imaged.\n");
 			$message->Show;
 		}
@@ -348,19 +412,26 @@ sub selectVMFiles
 		{
 			foreach(@findVMFiles)
 			{
+				logIt("[info] ($currentCaseName) Checking state of Virtual Machine: $_", 1, 1, 1);
 				my $vmStatus = checkIfVMRunning($_);
-				print "VM status is: $vmStatus\n";
+				#print "VM status is: $vmStatus\n";
 				if ($vmStatus == 1)
 				{
+					logIt("[info] ($currentCaseName) Virtual Machine: $_ is running.", 1, 1, 1);
 					my $messageBoxAnswer = $mw->messageBox(-title => "Suspend Virtual Machine?", -type => "YesNo", -icon => "question", -message => "$_ is currently powered on and running.\nDo you want to suspend it?\n", -default => "yes");
-					$consoleLog->insert('end',"**Message box answer: --$messageBoxAnswer--\n");
-					$consoleLog->see('end');
+					#$consoleLog->insert('end',"**Message box answer: --$messageBoxAnswer--\n");
+					#$consoleLog->see('end');
 					if ($messageBoxAnswer eq 'Yes')
 					{
+						logIt("[info] ($currentCaseName) User has selected to suspend $_. The virtual machine will be restarted once imaging is complete.", 1,1,1);
 						suspendVM($_);
 						push @vmsToRestart, $_;						
 					}
-				}	
+				}
+				else
+				{
+					logIt("[info] ($currentCaseName) Virtual Machine: $_ is not running.", 1, 1, 1);
+				}
 			}
 			$checkFrame1->destroy();
 			$buttonFrame1->destroy();
@@ -375,15 +446,15 @@ sub selectVMFiles
 			
 			foreach(@findVMFiles)
 			{
-				$consoleLog->insert('end', "Path -> --$_--\n");
-				$consoleLog->see('end');
+				#$consoleLog->insert('end', "Path -> --$_--\n");
+				#$consoleLog->see('end');
 				my $VMDirPath = getDirName($_);
-				$consoleLog->insert('end', "VMDIRPATH -> --$VMDirPath--\n");
-				$consoleLog->see('end');
+				#$consoleLog->insert('end', "VMDIRPATH -> --$VMDirPath--\n");
+				#$consoleLog->see('end');
 				#lists (ls) the given directory on the esxi server
 				my $stdout = $ssh->capture("ls $VMDirPath");
-				$consoleLog->insert('end', "STDOUT -> --$stdout--\n");
-				$consoleLog->see('end');
+				#$consoleLog->insert('end', "STDOUT -> --$stdout--\n");
+				#$consoleLog->see('end');
 				my @filesFound = split(/\s+/, $stdout);
 				
 				foreach(@filesFound)
@@ -407,11 +478,12 @@ sub selectVMFiles
 #refrence to the array of VMs that need to be restarted once imaging is complete
 sub confirmUserVMImageChoices
 {
-	$consoleLog->insert('end',"--$currentCaseName--\n");
-	$consoleLog->see('end');
+	#$consoleLog->insert('end',"--$currentCaseName--\n");
+	#$consoleLog->see('end');
 
 	if($currentCaseName =~ m/No Case Opened Yet/)
 	{
+		logIt("[error] (main) A case has not yet been opened. Open a case before imaging a VM.", 1, 0, 1);
 		my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "A case has not yet been opened. Open a case before imaging a VM.\n");
 		$message->Show;
 	}
@@ -437,6 +509,7 @@ sub confirmUserVMImageChoices
 		my $count = @VMsToImage;
 		if ($count == 0)
 		{
+			logIt("[error] ($currentCaseName) No files were selected to be imaged.", 1, 1, 1);
 			my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "No files were selected to be imaged.\n");
 			$message->Show;
 		}
@@ -448,30 +521,35 @@ sub confirmUserVMImageChoices
 				push @shortVMFileNames, "\n" .  getFileName($_);
 			}
 			my $messageBoxAnswer = $mw->messageBox(-title => "Test", -type => "YesNo", -icon => "question", -message => "Would you like to image the following VMs files?: @shortVMFileNames", -default => "yes");
-			$consoleLog->insert('end',"**Message box answer: --$messageBoxAnswer--\n");
-			$consoleLog->see('end');
+			#$consoleLog->insert('end',"**Message box answer: --$messageBoxAnswer--\n");
+			#$consoleLog->see('end');
 			if ($messageBoxAnswer eq 'Yes')
 			{
-				$consoleLog->insert('end',"**Message box answer $messageBoxAnswer was yes\n");
+				logIt("[info] ($currentCaseName) the following files will be imaged: @shortVMFileNames", 1, 1, 1);
+				#$consoleLog->insert('end',"**Message box answer $messageBoxAnswer was yes\n");
 				foreach(@VMsToImage)
 				{
-					$consoleLog->insert('end',"Working on $_\n");
-					$consoleLog->see('end');
+					logIt("[info] ($currentCaseName) Working on $_", 1, 1, 1);
+					#$consoleLog->insert('end',"Working on $_\n");
+					#$consoleLog->see('end');
 					#my $targetImageFile = ddTargetFile($_, getFileName($_));
 					my $targetImageFile = ddTargetFile($_);
 					#print "Going to SFTP $targetImageFile to this computer\n";
 					my $ip = $ESXip->get;
-					$consoleLog->insert('end',"Going to SFTP $targetImageFile to this computer from esxi server at IP $ip\n");
-					$consoleLog->see('end');
+					logIt("[info] ($currentCaseName) Going to SFTP $targetImageFile to this computer from ESXi server at IP $ip", 1, 1, 1);
+					#$consoleLog->insert('end',"Going to SFTP $targetImageFile to this computer from esxi server at IP $ip\n");
+					#$consoleLog->see('end');
 					$mw->update;
 					sftpTargetFileImage($targetImageFile);
 				}
 				#Restart VMs that were suspended once the imaging process is complete
+				logIt("[info] ($currentCaseName) Attempting to restart suspended VMs.", 1, 1, 1);
 				foreach (@$vmsToRestartRef)
 				{
 					startVM($_);
 				}
 				#Maybe add more info to the "done" window
+				logIt("[info] ($currentCaseName) All imaging operations complete.", 1, 1, 1);
 				my $message = $mw->MsgBox(-title => "Info", -type => "ok", -icon => "info", -message => "Done!\n");
 				$message->Show;
 				#Return the vm selection window to what it was origionally in case user wants to image more VMs
@@ -479,7 +557,7 @@ sub confirmUserVMImageChoices
 			}
 			else
 			{
-				$consoleLog->insert('end',"**Message box answer $messageBoxAnswer was no\n");
+				#$consoleLog->insert('end',"**Message box answer $messageBoxAnswer was no\n");
 			}
 		}
 	}
@@ -517,7 +595,7 @@ sub ddTargetFile
 	my $subWindow = $mw->Toplevel;
 	$subWindow->title("Size");
 	
-	########debugging window position stuff 
+	########debugging window position  
 	my $mwx = $mw->x;
 	my $mwy = $mw->y;
 	my $mwHeight = $mw->height;
@@ -525,9 +603,9 @@ sub ddTargetFile
 	my $swHeight = $subWindow->height;
 	my $swWidth = $subWindow->width;
 	
-	$consoleLog->insert('end',"mwx=$mwx \nmwy=$mwy \nmwHeight=$mwHeight \nmwWidth=$mwWidth \nsubWindowHeight=$swHeight \nsubWindowWidth=$swWidth");
-	$consoleLog->see('end');
-	###########debugging window position stuff 
+	#$consoleLog->insert('end',"mwx=$mwx \nmwy=$mwy \nmwHeight=$mwHeight \nmwWidth=$mwWidth \nsubWindowHeight=$swHeight \nsubWindowWidth=$swWidth");
+	#$consoleLog->see('end');
+	###########debugging window position  
 	
 	#Adjusts the sub window to appear in the middle of the main window
 	my $xpos = int((($mw->width - $subWindow->width) / 2) + $mw->x);
@@ -545,13 +623,13 @@ sub ddTargetFile
 	
 	my $md5 = calculateMD5HashOnESX($absolutePathFileToDD);
 	my $sha1 = calculateSHA1HashOnESX($absolutePathFileToDD);
+	
 
 	#Done telling the user some info, destroy the sub window b/c we are about to create a new one with new info
 	$subWindow->destroy();
 	
 	#print "Hashes Before DD:\n \tMD5: $md5\n \tSHA1: $sha1\n";
-	$consoleLog->insert('end',"Hashes Before DD:\n \tMD5: $md5\n \tSHA1: $sha1\n");
-	$consoleLog->see('end');
+	logIt("[info] ($currentCaseName) Hashes of $absolutePathFileToDD Before DD:\n \tMD5: $md5\n \tSHA1: $sha1", 1, 1, 1);
 	$mw->update;
 	sleep(1);
 
@@ -566,16 +644,20 @@ sub ddTargetFile
 	
 	sleep(5);
 	
+	logIt("[info] ($currentCaseName) Begining DD of file: $absolutePathFileToDD Destination: $ddDestination", 1, 1, 1);
+
 	my $stdout = $ssh->capture("dd if=$absolutePathFileToDD of=$ddDestination");
 	
 	$subWindow->destroy();
+	logIt("[info] ($currentCaseName) DD of file: $absolutePathFileToDD to Destination: $ddDestination Done.", 1, 1, 1);
 	
 	my $pathToHash = $ddDestination;
 	my $md5Check = calculateMD5HashOnESX($pathToHash);
 	my $sha1Check = calculateSHA1HashOnESX($pathToHash);
 	#print "Hashes After DD:\n \tMD5: $md5Check\n \tSHA1: $sha1Check\n";
-	$consoleLog->insert('end',"Hashes After DD:\n \tMD5: $md5Check\n \tSHA1: $sha1Check\n");
-	$consoleLog->see('end');
+	logIt("[info] ($currentCaseName) Hashes of $pathToHash After DD:\n \tMD5: $md5Check\n \tSHA1: $sha1Check", 1, 1, 1);
+	#$consoleLog->insert('end',"Hashes After DD:\n \tMD5: $md5Check\n \tSHA1: $sha1Check\n");
+	#$consoleLog->see('end');
 	$mw->update;
 	sleep(1);
 	return $pathToHash;
@@ -594,12 +676,14 @@ sub sftpTargetFileImage
 	#$consoleLog->insert('end', "$user\n");
 	my $password = $password->get;
 	my $host= '192.168.100.141';
-	$consoleLog->insert('end', "Going to connect to $serverIP with credeitials $user and $password\n");
-	$consoleLog->see('end');
+	
+	logIt("[info] ($currentCaseName) SFTP connecting to ESXi server $serverIP", 1, 1, 1);
+	#$consoleLog->insert('end', "Going to connect to $serverIP with credeitials $user and $password\n");
+	#$consoleLog->see('end');
 	$mw->update;
 	my $sftp = Net::SFTP::Foreign->new($serverIP,  user => $user, password => $password);
 	$sftp->die_on_error("SSH Connection Failed");
-	
+	logIt("[info] ($currentCaseName) Successfully connected to $serverIP", 1, 1, 1);
 	
 	my $getFileName2 = getFileName($fileToSFTP);
 	#my @filePathParts2 = split('/', $fileToSFTP);
@@ -608,8 +692,9 @@ sub sftpTargetFileImage
 	#Now that we have a cases directory, the images need to be saved to that directory
 	#my $localDestination = "/home/matt/Desktop/" . $getFileName2;
 	my $localDestination = $currentCaseLocation . "/" . $getFileName2;
-	$consoleLog->insert('end', "Transfering file from:$fileToSFTP to:$localDestination\n");
-	$consoleLog->see('end');
+	logIt("[info] ($currentCaseName) Transfering $fileToSFTP from ESXi server to this computer. Local Destination:$localDestination", 1, 1, 1);
+	#$consoleLog->insert('end', "Transfering file from:$fileToSFTP to:$localDestination\n");
+	#$consoleLog->see('end');
 	$mw->update;
 
 	#print "This file will SFTP from $fileToSFTP to $localDestination\n";
@@ -639,6 +724,7 @@ sub sftpTargetFileImage
 	}); #or die "File transfer failed\n";
 	$subWindow->destroy;
 	#With transfer complete, destroy the progress bar window
+	logIt("[info] ($currentCaseName) SFTP transfer complete.", 1, 1, 1);
 	sleep(2);
 	
 	#get the file size locally
@@ -657,11 +743,14 @@ sub sftpTargetFileImage
 	$subWindow->Label(-text => "File: $localDestination\nSize: $fileSize\nCalculating MD5 and SHA1 hashes for $localDestination...\nThis may take some time depending on the file size, please be patient\n")->pack;
 	$mw->update;
 	
+	logIt("[info] ($currentCaseName) Working on $localDestination", 1, 1, 1);
+	
 	my $md5Check = calculateMD5HashLocal($localDestination);
 	my $sha1Check = calculateSHA1HashLocal($localDestination);
 	#print "Hashes After DD:\n \tMD5: $md5Check\n \tSHA1: $sha1Check\n";
-	$consoleLog->insert('end',"Hashes After DD:\n \tMD5: $md5Check\n \tSHA1: $sha1Check\n");
-	$consoleLog->see('end');
+	logIt("[info] ($currentCaseName) Hashes of $localDestination After SFTP Transfer:\n \tMD5: $md5Check\n \tSHA1: $sha1Check", 1, 1, 1);
+	#$consoleLog->insert('end',"Hashes After DD:\n \tMD5: $md5Check\n \tSHA1: $sha1Check\n");
+	#$consoleLog->see('end');
 	sleep(1);
 	
 	cleanup($fileToSFTP);
@@ -674,6 +763,7 @@ sub checkIfVMRunning
 	my $vmxPath = $_[0];
 	my $stdout = $ssh->capture('/sbin/vmdumper -l');
 	my @lines = split(/\n/, $stdout);
+	
 	foreach(@lines)
 	{
 		#print "going to work on $_\n";
@@ -696,6 +786,7 @@ sub checkIfVMRunning
 sub suspendVM
 {
 	my $vmxPath = $_[0];
+	logIt("[info] ($currentCaseName) Working on $vmxPath ...", 1,1,1);
 	my $stdout = $ssh->capture('/sbin/vmdumper -l');
 	my @lines = split(/\n/, $stdout);
 	foreach(@lines)
@@ -703,19 +794,24 @@ sub suspendVM
 		my @lineParts = split(/\s+/, $_);
 		foreach (@lineParts)
 		{
-			print "comparing $vmxPath is $_\n";
+			#print "comparing $vmxPath is $_\n";
 			if ($_ =~ m/$vmxPath/)
 			{
-				print "Match, $vmxPath is $_\n";
-				print "here is the current WID $lineParts[0]\n";
+				#print "Match, $vmxPath is $_\n";
+				#print "here is the current WID $lineParts[0]\n";
 				my $VMwid = $lineParts[0];
 				$VMwid =~ s/=/ /g;
 				my @VMwidSplit = split(/\s+/,$VMwid);
-				print "Cleaned WID $VMwidSplit[1]\n";
-				print "going to execute /sbin/vmdumper $VMwidSplit[1] suspend_vm\n";
+				#print "Cleaned WID $VMwidSplit[1]\n";
+				#print "going to execute /sbin/vmdumper $VMwidSplit[1] suspend_vm\n";
 				my $stdout = $ssh->capture("/sbin/vmdumper $VMwidSplit[1] suspend_vm") or warn "remote command failed " . $ssh->error;
-				print "Suspending VM...";
-				
+				#print "Suspending VM...";
+				my $lineToPrint = getLoggingTime() . " [info] ($currentCaseName) Suspending VM...";
+				print PROGRAMLOGFILE $lineToPrint;
+				print $currentCaseLog $lineToPrint;
+				$consoleLog->insert('end', $lineToPrint);
+				$consoleLog->see('end');
+						
 				my $subWindow = $mw->Toplevel;
 				$subWindow->title("Suspending VM: $vmxPath");
 				#Adjusts the sub window to appear in the middle of the main window
@@ -733,13 +829,20 @@ sub suspendVM
 				while ($vmStillRunning == 1)
 				{
 					$vmStillRunning = checkIfVMRunning($vmxPath);
+					
+					print PROGRAMLOGFILE ".";
+					print $currentCaseLog ".";
 					print ".";
+					
 					$text = $text . ".";
 					$suspendVMLabel->configure(-text => $text);
 					$mw->update;
 					sleep(1);
 				}
+				print PROGRAMLOGFILE "Done!\n";
+				print $currentCaseLog "Done!\n";
 				print "Done!\n";
+				logIt("[info] $vmxPath suspended.", 1,1,1);
 				$subWindow->destroy();
 				return 0;
 			}
@@ -752,9 +855,10 @@ sub suspendVM
 sub startVM
 {
 	my $vmToRestart = $_[0];
-	print "going to try and restart this vm $vmToRestart\n";
+	logIt("[info] ($currentCaseName) Going to try and restart this VM: $vmToRestart", 1, 1, 1);
+	#print "going to try and restart this vm $vmToRestart\n";
 	my $vmxFile = getFileName($vmToRestart);
-	print "this is the vmx $vmxFile\n";
+	#print "this is the vmx $vmxFile\n";
 	my $stdout = $ssh->capture("vim-cmd vmsvc/getallvms |grep $vmxFile");
 	my @lines = split(/\n/, $stdout);
 	my $count = @lines;
@@ -762,11 +866,16 @@ sub startVM
 	if ($count == 1)
 	{
 		my @parts = split(/\s+/, $lines[0]);
-		print "@parts\n";
-		print "Here is the VMID $parts[0]\n";
-		print "This command can be executed vim-cmd vmsvc/power.on $parts[0]\n";
+		#print "@parts\n";
+		#print "Here is the VMID $parts[0]\n";
+		#print "This command can be executed vim-cmd vmsvc/power.on $parts[0]\n";
 		my $stdout = $ssh->capture("vim-cmd vmsvc/power.on $parts[0]") or warn "remote command failed " . $ssh->error;
-		print "Starting VM...";
+		#print "Starting VM...";
+		my $lineToPrint = getLoggingTime() . " [info] ($currentCaseName) Starting VM...";
+		print PROGRAMLOGFILE $lineToPrint;
+		print $currentCaseLog $lineToPrint;
+		$consoleLog->insert('end', $lineToPrint);
+		$consoleLog->see('end');
 		
 		my $subWindow = $mw->Toplevel;
 		$subWindow->title("Starting VM: $vmToRestart");
@@ -785,13 +894,20 @@ sub startVM
 		while ($vmStillRunning == 0)
 		{
 			$vmStillRunning = checkIfVMRunning($vmToRestart);
+			
+			print PROGRAMLOGFILE ".";
+			print $currentCaseLog ".";
 			print ".";
+			
 			$text = $text . ".";
 			$startVMLabel->configure(-text => $text);
 			$mw->update;
 			sleep(1);
 		}
+		print PROGRAMLOGFILE "Done!\n";
+		print $currentCaseLog "Done!\n";
 		print "Done!\n";
+		logIt("[info] $vmToRestart restarted.", 1,1,1);
 		$subWindow->destroy();
 		return 0;
 	}
@@ -802,17 +918,21 @@ sub startVM
 #ideally dd would "store" copies somewhere else but this is how I have it setup for now
 sub cleanup
 {
+	logIt("[info] ($currentCaseName) Cleaning up.", 1, 1, 1);
 	my $fileToDel = $_[0];
 	if ($fileToDel =~ m/.+\.dd$/)
 	{
-		print "Going to delete file $fileToDel\n";
+		logIt("[info] ($currentCaseName) Going to delete remote file $fileToDel.", 1, 1, 1);
+		#print "Going to delete file $fileToDel\n";
 		my $stdout = $ssh->capture("rm -f $fileToDel");
-		print "STDOUT: $stdout ...Done!\n";
+		#print "STDOUT: $stdout ...Done!\n";
+		logIt("[info] ($currentCaseName) Done deleting remote file $fileToDel $stdout", 1, 1, 1);
 		$consoleLog->see('end');
 	}
 	else
 	{
-		print "File ($fileToDel) does not have a .dd extension, will not delete this file\n";
+		logIt("[info] ($currentCaseName) File ($fileToDel) does not have a .dd extension, will not delete this file.", 1, 1, 1);
+		#print "File ($fileToDel) does not have a .dd extension, will not delete this file\n";
 		$consoleLog->see('end');
 	}
 }
@@ -821,7 +941,6 @@ sub cleanup
 #Will be run from the Tools->Setttings menu bar or run from the readConfigFile sub if no configuration file is found
 sub editSettings
 {
-
 	if (-e $configFileLocation)
 	{
 		#my $error = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "The config file does exist");
@@ -935,7 +1054,7 @@ sub createNewCase
 			$currentCaseName = $newCaseName->get;
 			#Dont want case names to have any spaces
 			$currentCaseName =~ s/ //g;
-			print "current case name: $currentCaseName\n";
+			#print "current case name: $currentCaseName\n";
 			$mw->update;
 			my $newCaseDirPath = $ESXiCasesDir . $currentCaseName;
 			#checks to see if cases directory structure exists then creates it if necessary
@@ -952,8 +1071,14 @@ sub createNewCase
 			{
 				mkdir ($newCaseDirPath, 0755);
 				$currentCaseLocation = $newCaseDirPath;
-				$consoleLog->insert('end', "Created new case: $currentCaseName Location: $currentCaseLocation\n");
-				$consoleLog->see('end');
+				my $caseLogFileLocation = $currentCaseLocation . "/$currentCaseName.log";
+				open ($currentCaseLog, ">>$caseLogFileLocation");
+				#print $currentCaseLog getLoggingTime() . " [info] $currentCaseName log opened\n";
+				#$consoleLog->insert('end', "Created new case: $currentCaseName Location: $currentCaseLocation\n");
+				#$consoleLog->insert('end', "Opened case log file $caseLogFileLocation\n");
+				#$consoleLog->see('end');
+				logIt("[info] ($currentCaseName) Created new case: $currentCaseName Location: $currentCaseLocation", 1, 1, 1);
+				logIt("[info] ($currentCaseName) Opened case log file $caseLogFileLocation", 1, 1, 1);
 				$caseLabel->configure(-text => "Current Case: $currentCaseName Location: $currentCaseLocation");
 				#$dirTreeLabel->configure(-text => "Directory listing of open case:\n");
 				#my $dirTree = $dirTreeFrame->DirTree(-directory => $currentCaseLocation)->pack;
@@ -976,8 +1101,14 @@ sub openExistingCase
 	$currentCaseName = getFileName($currentCaseLocation);
 	##my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "current case name: --$currentCaseName-- dir: --$currentCaseLocation--n");
 		##$message->Show;
-	$consoleLog->insert('end', "Opened an existing case: $currentCaseName Location: $currentCaseLocation\n");
-	$consoleLog->see('end');
+	my $caseLogFileLocation = $currentCaseLocation . "/$currentCaseName.log";
+	open ($currentCaseLog, ">>$caseLogFileLocation");
+	#print $currentCaseLog getLoggingTime() . " [info] $currentCaseName log opened\n";	
+	#$consoleLog->insert('end', "Opened an existing case: $currentCaseName Location: $currentCaseLocation\n");
+	#$consoleLog->insert('end', "Opened case log file $caseLogFileLocation\n");
+	#$consoleLog->see('end');
+	logIt("[info] ($currentCaseName) Opened an existing case: $currentCaseName Location: $currentCaseLocation", 1, 1, 1);
+	logIt("[info] ($currentCaseName) Opened log file: $caseLogFileLocation For case: $currentCaseName", 1, 1, 1);
 	$caseLabel->configure(-text => "Current Case: $currentCaseName Location: $currentCaseLocation");
 	#$dirTreeLabel->configure(-text => "Directory listing of open case:\n");
 	#my $dirTree = $dirTreeFrame->DirTree(-directory => $currentCaseLocation)->pack;
@@ -1115,6 +1246,39 @@ sub runThroughHexdump
 #******Start of Commonly Used Subs to Make Life Better******************************************************************************#
 #***********************************************************************************************************************************#
 
+#simpflies logging. Will take what you want to print as an arguement and output to $consoleLog, the main program log, and the current case log
+#Expects he exact message to be printed. ex. [info] (foo) case foo was opened
+#Also expects three values 0 or 1 to determine what to print out to (for whatever reason a message need to only be printed to one log file)
+# Args: message programLogFile caseLogFile consoleLog
+sub logIt
+{
+	my $lineToPrint = $_[0];
+	my $programLogPrint = $_[1];
+	my $caseLogPrint = $_[2];
+	my $consoleLogPrint = $_[3];
+	
+	my $lineToPrint = getLoggingTime() . " " . $lineToPrint . "\n";
+	print PROGRAMLOGFILE $lineToPrint if $programLogPrint == 1;
+	print $currentCaseLog $lineToPrint if $caseLogPrint == 1;
+	$consoleLog->insert('end', $lineToPrint) if $consoleLogPrint == 1;
+	#print PROGRAMLOGFILE getLoggingTime() ." [info] Initilized... GREETINGS PROGESSOR FALKEN.\n";
+	#print $currentCaseLog getLoggingTime() . " [info] $currentCaseName log opened\n";	
+	#$consoleLog->insert('end', "Opened case log file $caseLogFileLocation\n");
+	$consoleLog->see('end') if $consoleLogPrint == 1;
+	print DEBUGLOGFILE $lineToPrint;
+	return $lineToPrint;
+}
+
+#Gets the current time and returns a nice timestamp for logging purposes
+#http://stackoverflow.com/questions/12644322/how-to-write-the-current-timestamp-in-a-file-perl
+sub getLoggingTime {
+
+    my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)=localtime(time);
+    my $nice_timestamp = sprintf ( "%04d%02d%02d %02d:%02d:%02d",
+                                   $year+1900,$mon+1,$mday,$hour,$min,$sec);
+    return $nice_timestamp;
+}
+
 #Given the output of ls -lah of a single file, returns the file size, *nix systems only
 sub returnFileSize
 {
@@ -1142,8 +1306,8 @@ sub getDirName
 {
 	my $absolutePath = $_[0];
 
-	$consoleLog->insert('end',"Got this: $absolutePath\n");
-	$consoleLog->see('end');
+	#$consoleLog->insert('end',"Got this: $absolutePath\n");
+	#$consoleLog->see('end');
 	my @fileNameParts = split('/',$absolutePath);
 	#Becasue there is a leading / in the path we need to get rid of the first element in the array becasue it is nothing. print "--$_--" = ----
 	shift @fileNameParts;
@@ -1155,8 +1319,8 @@ sub getDirName
 		$parentDirPath = $parentDirPath . "/" . $_;
 	}
 	$parentDirPath = $parentDirPath . "/";
-	$consoleLog->insert('end',"Returning This:  $parentDirPath\n");
-	$consoleLog->see('end');
+	#$consoleLog->insert('end',"Returning This:  $parentDirPath\n");
+	#$consoleLog->see('end');
 	return $parentDirPath;
 }
 
@@ -1165,13 +1329,10 @@ sub calculateMD5HashOnESX
 {
 	my $fileToHash = $_[0];
 	
-	#print "*Calculating md5 hash this may take a while be patient...";
-	$consoleLog->insert('end',"*Calculating md5 hash this may take a while be patient...");
-	$consoleLog->see('end');
+	logIt("[info] ($currentCaseName) Calculating md5 hash of file on ESXi server this may take a while be patient...", 1, 1, 1);
 	my $stdout = $ssh->capture("md5sum $fileToHash");
 	#print "done!\n";
-	$consoleLog->insert('end',"done!\n");
-	$consoleLog->see('end');
+	logIt("[info] ($currentCaseName) Done calculating md5 hash of file on ESXi server.", 1, 1, 1);
 	chomp $stdout;
 	return $stdout;   
 }
@@ -1180,14 +1341,11 @@ sub calculateMD5HashOnESX
 sub calculateSHA1HashOnESX
 {
 	my $fileToHash = $_[0];
-	
-	#print "*Calculating sha1 hash this may take a while be patient...";
-	$consoleLog->insert('end',"Calculating sha1 hash this may take a while be patient...");
-	$consoleLog->see('end');
+
+	logIt("[info] ($currentCaseName) Calculating sha1 hash of file on ESXi server this may take a while be patient...", 1, 1, 1);
 	my $stdout = $ssh->capture("sha1sum $fileToHash");
 	#print "done!\n";
-	$consoleLog->insert('end',"done!\n");
-	$consoleLog->see('end');
+	logIt("[info] ($currentCaseName) Done calculating sha1 hash of file on ESXi server.", 1, 1, 1);
 	chomp $stdout;
 	return $stdout;   
 }
@@ -1199,8 +1357,9 @@ sub calculateMD5HashLocal
 	my $operatingSystem = checkOS();
 	
 	#print "*Calculating md5 hash this may take a while be patient...";
-	$consoleLog->insert('end',"*Calculating md5 hash this may take a while be patient...");
-	$consoleLog->see('end');
+	logIt("[info] ($currentCaseName) Calculating md5 hash of local file this may take a while be patient...", 1, 1, 1);
+	#$consoleLog->insert('end',"*Calculating md5 hash this may take a while be patient...");
+	#$consoleLog->see('end');
 	my $stdout = `md5sum $fileToHash` if $operatingSystem == 1;
 	$stdout = `md5 $fileToHash` if $operatingSystem == 2;
 	
@@ -1208,8 +1367,8 @@ sub calculateMD5HashLocal
 	#print "$split[$#split]\n" if $operatingSystem == 2;
 	#print "$split[0]\n" if $operatingSystem == 1;
 	
-	$consoleLog->insert('end',"\nRaw: @split\n");
-	$consoleLog->see('end');
+	#$consoleLog->insert('end',"\nRaw: @split\n");
+	#$consoleLog->see('end');
 	
 	#[$#split] gives you the last element of an array
 	$stdout = $split[0] if $operatingSystem == 1;
@@ -1217,8 +1376,9 @@ sub calculateMD5HashLocal
 
 	#$stdout = $ssh->capture("md5sum $fileToHash");
 	#print "done!\n";
-	$consoleLog->insert('end',"done!\n");
-	$consoleLog->see('end');
+	logIt("[info] ($currentCaseName) Done calculating md5 hash of local file.", 1, 1, 1);
+	#$consoleLog->insert('end',"done!\n");
+	#$consoleLog->see('end');
 	chomp $stdout;
 	return $stdout;   
 }
@@ -1230,8 +1390,9 @@ sub calculateSHA1HashLocal
 	my $operatingSystem = checkOS();
 	
 	#print "*Calculating sha1 hash this may take a while be patient...";
-	$consoleLog->insert('end',"*Calculating sha1 hash this may take a while be patient...");
-	$consoleLog->see('end');
+	logIt("[info] ($currentCaseName) Calculating sha1 hash of local file this may take a while be patient...", 1, 1, 1);
+	#$consoleLog->insert('end',"*Calculating sha1 hash this may take a while be patient...");
+	#$consoleLog->see('end');
 	my $stdout = `sha1sum $fileToHash` if $operatingSystem == 1;
 	$stdout = `shasum $fileToHash` if $operatingSystem == 2;
 	
@@ -1243,12 +1404,12 @@ sub calculateSHA1HashLocal
 	#[$#split] gives you the last element of an array
 	$stdout = $split[0] if $operatingSystem == 1;
 	$stdout = $split[0] if $operatingSystem == 2;
-
 	
 	#$stdout = $ssh->capture("sha1sum $fileToHash");
 	#print "done!\n";
-	$consoleLog->insert('end',"done!\n");
-	$consoleLog->see('end');
+	logIt("[info] ($currentCaseName) Done calculating sha1 hash of local file.", 1, 1, 1);
+	#$consoleLog->insert('end',"done!\n");
+	#$consoleLog->see('end');
 	chomp $stdout;
 	return $stdout;   
 }
@@ -1258,19 +1419,23 @@ sub calculateSHA1HashLocal
 #used the command 'md5sum' whereas OSX just uses 'md5'
 sub checkOS
 {
+	push @debugMessages, logIt("[debug] (main) Checking operating system.",0,0,0);
 	my $OS = $^O;
 	my $osValue;
 	if($OS eq "linux")
 	{
+		push @debugMessages, logIt("[debug] (main) Operating system is Linux.",0,0,0);
 		$osValue = 1;
 	}
 	#darwin aka osx
 	elsif($OS eq "darwin")
 	{
+		push @debugMessages, logIt("[debug] (main) Operating system is Mac OSX (darwin).",0,0,0);
 		$osValue = 2;
 	}
 	else
 	{
+		push @debugMessages, logIt("[debug] (main) Unsupported operating system detected. ^O.",0,0,0);
 		my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "You are running an operating system that this script is not designed to work for...\nYour operating system is: $^O\nSupported operating systems are Linux (linux) and OSX (darwin)\n");
 		$message->Show;
 		#print "! You are running an operating system that this script is not designed to work for...\n";
@@ -1295,3 +1460,5 @@ sub foo
 
 #Wait for events
 MainLoop;
+
+close (PROGRAMLOGFILE);
