@@ -4,14 +4,15 @@ use Tk;
 use Tk::ProgressBar;
 use Tk::MsgBox;
 use Tk::DirTree;
+use Tk::Pane;
 #use Tk::Text;
 use Net::OpenSSH;
 use Net::SFTP::Foreign;
 
 ########################
-#ESXimager2.4.pl
+#ESXimager2.5.pl
 #Matt Tentilucci	
-#12-2-2014
+#12-4-2014
 #
 #V2.1 - Adding in user confirmation of VM choices and passing them back to sshToESXi sub, removing lots of misc. lines from debugging/trial and error
 #V2.2 - Redesign user selection of VMs window and switched from grid to pack geometry manager. Instead of having a sub window, 
@@ -20,10 +21,20 @@ use Net::SFTP::Foreign;
 #V2.3 - Added in menu item to open an existing case, variable cleanup, create new case, open case
 #V2.4 - Created dirTreeFrame to show case directory listing to use once a case has been opened -> future, allow user to click on files and get info(size, hash, etc...)
 # moved some boxes around, the connect frame is now horizontial at the top of the window
+#V2.5 - Improved VM imaging window. Asks the user what VM they want to image, then what files from that VM, then confirms selection. Added windows telling the user
+# what the program is doing, when the file gets DD, or hashes are being calculated because the program will not respond to user inputs when those things are being executed
+# Controled where subwindows are shown on the screen, they show up in the middle of the main window. Changed console log box to scrolled and tied STDOUT to print in the box. 
+# Now using print will print in the consoleLog, also $consoleLog->see('end') shows the bottom of the console log and esentially makes it scroll automatically as it grows 
+# After the image has been dd'd and SFTP'd the script will cleanup the .dd files is created on the ESXi server
+# Made the checkbutton frame scrolled when user has to select what vms/files they want to image
 ########################
 
 #variable so ssh session to esxi can be accessible outside of sub
 my $ssh;
+my $checkFrame1;
+my $checkFrame2;
+my $buttonFrame1;
+my $buttonFrame2;
 
 #Variables for location of working directory, case directory, configuration file, and log file
 my $configFileLocation = $ENV{"HOME"} . "/ESXimager/ESXimager.cfg";
@@ -35,13 +46,14 @@ my $currentCaseLocation;
 
 #Creates main window
 my $mw = MainWindow->new;
-$mw->title("ESXimager 2.4");
+$mw->title("ESXimager 2.5");
 $mw->geometry("1400x600");
 
 #Create menu bar
 $mw->configure(-menu => my $menubar = $mw->Menu);
 my $file = $menubar->cascade(-label => '~File');
 my $tools = $menubar->cascade(-label => '~Tools');
+my $view = $menubar->cascade(-label => '~View');
 my $help = $menubar->cascade(-label => '~Help');
 
 $file->command(-label => 'New Case', -underline => 0, -command => \&createNewCase);
@@ -52,7 +64,9 @@ $file->command(-label => "Quit", -underline => 0, -command => \&exit);
 $tools->command(-label => "Settings", -command => \&editSettings);
 
 #console window
-my $consoleLog = $mw->Text(-height => 10, -width => 125)->pack(-side => 'bottom', -fill => 'both');
+#my $consoleLog = $mw->Text(-height => 10, -width => 125)->pack(-side => 'bottom', -fill => 'both');
+my $consoleLog = $mw->Scrolled('Text',-height => 10, -width => 125)->pack(-side => 'bottom', -fill => 'both');
+tie *STDOUT, 'Tk::Text', $consoleLog->Subwidget('scrolled');
 
 ##Connection Frame##
 #Create top left frame for holding username, password, server IP, connect button widgets
@@ -96,6 +110,9 @@ $vmChoicesFrame->pack(-side => 'left', -fill => 'both', -expand => 1);
 my $vmChoicesLabel = $vmChoicesFrame->Label(-text => "Connect to an ESXi server to populate\n")->pack;
 ##EndVM Choices Frame##
 
+$consoleLog->see('end');
+
+
 #$consoleLog->insert('end',"\nfoo");
 checkOS();
 readConfigFile();
@@ -138,6 +155,7 @@ sub readConfigFile
 			else
 			{
 				$consoleLog->insert('end', "Misformated Config file, dont know what $_ is\n");
+				$consoleLog->see('end');
 			}
 		}
 		close(CONFIGFILE);
@@ -164,6 +182,7 @@ sub sanitizeInputs
 	#$consoleLog->insert('end', "$user\n");
 	my $password = $password->get;
 	$consoleLog->insert('end', "$ip $user $password\n");
+	$consoleLog->see('end');
 	
 	my $validInput = 0;
 	
@@ -213,6 +232,7 @@ sub sshToESXi
 	$ssh = Net::OpenSSH->new("$user:$password\@$ip", master_opts => [ -o => "StrictHostKeyChecking=no"]);
 	$ssh->error and die "Could not connect to $ip" . $ssh->error;
 	$consoleLog->insert('end', "done!\n");
+	$consoleLog->see('end');
 	$mw->update;
 	
 	#my $stdout = $ssh->capture("ls -l /vmfs/volumes/");
@@ -222,9 +242,16 @@ sub sshToESXi
 	findVMs("/vmfs/volumes/", $ip);
 }
 
-#find VMs on ESXi server and allows the user to select which VM(s) they want to image
+#Step 1: $checkFrame1 and $buttonFrame1 - find VMs on ESXi server and allows the user to select which VM(s) they want to image
 sub findVMs
 {
+	#destroys the two frames from the selectVMFiles sub if they are defined. Either the user hit the back button or they imaged a VM which returns to this screen when completed
+	if (defined $checkFrame2 && defined $buttonFrame2)
+	{
+		$checkFrame2->destroy();
+		$buttonFrame2->destroy();
+	}
+
 	my @vmxFound;
 	my @getVMs;
 	my $vmstore = $_[0];
@@ -238,8 +265,14 @@ sub findVMs
 	
 	#my $subWindow = $mw->Toplevel;
 	#$vmChoicesFrame->title("Virtual Machines found on $ip");
-	my $checkFrame = $vmChoicesFrame->Frame()->pack(-side => "top");
-	$checkFrame->Label(-text=>"Please select which virtual machines you want to image:")->pack(-side => "top")->pack();
+	#$checkFrame1 = $vmChoicesFrame->Frame()->pack(-side => "top");
+	#make the checkbox frame scrollable incase there are multiple VMs/files that go beyond the window size
+	$checkFrame1 = $vmChoicesFrame->Scrolled('Pane',-scrollbars => 'osoe')->pack(-side => 'top', -fill => 'both', -expand => 1);
+	if (defined $vmChoicesLabel)
+	{
+		$vmChoicesLabel->packForget;
+	}
+	$checkFrame1->Label(-text=>"Please select which virtual machines you want to image:")->pack(-side => "top")->pack();
 	
 	#finds anything with .vmx extenstion meaning it is a VM
 	my $stdout = $ssh->capture("find $vmstore -name \"*.vmx\"");
@@ -253,7 +286,7 @@ sub findVMs
 	foreach(@vmxFound)
 	{
 		$checkButtonValues[$counter] = '0';
-		$checkButtons[$counter] = $checkFrame->Checkbutton(-text => $_,
+		$checkButtons[$counter] = $checkFrame1->Checkbutton(-text => $_,
 									-onvalue => $_,
                                     -offvalue => '0',
 									-variable => \$checkButtonValues[$counter])->pack();
@@ -261,17 +294,102 @@ sub findVMs
 	}
 	
 	#Creates ok and cancel button to approve VM selections
-	my $buttonFrame = $vmChoicesFrame->Frame()->pack(-side => "bottom");
-	my $okButton = $buttonFrame->Button(-text => 'Image',
-                                       -command => [\&confirmUserVMImageChoices, \@checkButtonValues]
+	$buttonFrame1 = $vmChoicesFrame->Frame()->pack(-side => "bottom");
+	my $okButton = $buttonFrame1->Button(-text => 'Next',
+                                       -command => [\&selectVMFiles, \@checkButtonValues]
 									   )->pack(-side => "left");
 	#my $cancelButton = $buttonFrame->Button(-text => "Cancel", -command => [$subWindow => 'destroy'])->pack();
 }
 
-#Confirms the users choices for which VMs they wish to acquire
+#Step 2: $checkFrame2 and $checkFrame2 - destroys the frames from the findVMs sub and replaces them with files assiciated with the VMs they want to image.
+#Asks the user what files they want to acquire, .vmx .vmdk .vmem etc.....
+sub selectVMFiles
+{
+	if($currentCaseName =~ m/No Case Opened Yet/)
+	{
+		my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "A case has not yet been opened. Open a case before imaging a VM.\n");
+		$message->Show;
+	}
+	else
+	{
+		my $choicesRef = shift; #$_[0];
+		my @findVMFiles;
+		foreach(@$choicesRef)
+		{
+			#$consoleLog->insert('end',"**Working on --$_--\n");
+			if($_ ne '0')
+			{
+				#$consoleLog->insert('end',"**--$_-- is not 0\n");
+				push @findVMFiles, $_;
+			}
+			else
+			{
+				#$consoleLog->insert('end',"**--$_-- is 0\n");
+			}
+		}
+		
+		my $count = @findVMFiles;
+		if ($count == 0)
+		{
+			my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "No VM's were selected to be imaged.\n");
+			$message->Show;
+		}
+		else
+		{
+			$checkFrame1->destroy();
+			$buttonFrame1->destroy();
+			
+			my @checkButtons;
+			my @checkButtonValues;
+			my $counter = 0;
+			
+			#$checkFrame2 = $vmChoicesFrame->Frame()->pack(-side => "top");
+			$checkFrame2 = $vmChoicesFrame->Scrolled('Pane', -scrollbars => 'osoe')->pack(-side => 'top', -fill => 'both', -expand => 1);
+			#$checkFrame2->Label(-text=>"Please select which virtual machines you want to image:")->pack(-side => "top")->pack();
+			
+			foreach(@findVMFiles)
+			{
+				$consoleLog->insert('end', "Path -> --$_--\n");
+				$consoleLog->see('end');
+				my $VMDirPath = getDirName($_);
+				$consoleLog->insert('end', "VMDIRPATH -> --$VMDirPath--\n");
+				$consoleLog->see('end');
+				#lists (ls) the given directory on the esxi server
+				my $stdout = $ssh->capture("ls $VMDirPath");
+				$consoleLog->insert('end', "STDOUT -> --$stdout--\n");
+				$consoleLog->see('end');
+				my @filesFound = split(/\s+/, $stdout);
+				
+				foreach(@filesFound)
+				{
+					my $filePath = $VMDirPath . $_;
+				
+					$checkButtonValues[$counter] = '0';
+					$checkButtons[$counter] = $checkFrame2->Checkbutton(-text => $filePath,
+												-onvalue => $filePath,
+												-offvalue => '0',
+												-variable => \$checkButtonValues[$counter])->pack();
+					$counter++;
+				}
+			}
+		
+			#Creates ok and cancel button to approve VM selections
+			$buttonFrame2 = $vmChoicesFrame->Frame()->pack(-side => "bottom");
+			my $backButton = $buttonFrame2->Button(-text => 'Back',
+											   -command => [\&findVMs]
+											   )->pack(-side => "left");
+			my $okButton = $buttonFrame2->Button(-text => 'Next',
+											   -command => [\&confirmUserVMImageChoices, \@checkButtonValues]
+											   )->pack(-side => "left");
+		}		
+	}
+}
+
+#Step 3: Confirms the users choices for which VMs they wish to acquire
 sub confirmUserVMImageChoices
 {
 	$consoleLog->insert('end',"--$currentCaseName--\n");
+	$consoleLog->see('end');
 
 	if($currentCaseName =~ m/No Case Opened Yet/)
 	{
@@ -284,7 +402,6 @@ sub confirmUserVMImageChoices
 		my @VMsToImage;
 		foreach(@$choicesRef)
 		{
-		
 			#$consoleLog->insert('end',"**Working on --$_--\n");
 			if($_ ne '0')
 			{
@@ -296,47 +413,61 @@ sub confirmUserVMImageChoices
 				#$consoleLog->insert('end',"**--$_-- is 0\n");
 			}
 		}
-		my @shortVMNames;
-		foreach(@VMsToImage)
+		
+		my $count = @VMsToImage;
+		if ($count == 0)
 		{
-			push @shortVMNames, "\n" .  getFileName($_);
-		}
-		#my $msgBox = $mw->MsgBox(-title => "Test", -type => "yesno", -icon => "question", -message => "Would you like to image the following VMs?: @shortVMNames");
-		#$msgBox->Show;
-		my $messageBoxAnswer = $mw->messageBox(-title => "Test", -type => "YesNo", -icon => "question", -message => "Would you like to image the following VMs?: @shortVMNames", -default => "yes");
-		#my $messageBoxAnswer => $mw->Dialog(-title => "Test", -bitmap => "question", -text => "Would you like to image the following VMs?: @shortVMNames", -buttons => ['Yes', 'No'], -default_button => "Yes");
-		$consoleLog->insert('end',"**Message box answer: --$messageBoxAnswer--\n");
-		if ($messageBoxAnswer eq 'Yes')
-		{
-			$consoleLog->insert('end',"**Message box answer $messageBoxAnswer was yes\n");
-			#$subWindow->destroy;
-			foreach(@VMsToImage)
-			{
-				$consoleLog->insert('end',"Working on $_\n");
-				my $targetImageFile = ddTargetFile($_, getFileName($_));
-				#print "Going to SFTP $targetImageFile to this computer\n";
-				my $ip = $ESXip->get;
-				$consoleLog->insert('end',"Going to SFTP $targetImageFile to this computer from esxi server at IP $ip\n");
-				$mw->update;
-				sftpTargetFileImage($ip,$targetImageFile);
-			}
+			my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "No files were selected to be imaged.\n");
+			$message->Show;
 		}
 		else
 		{
-			$consoleLog->insert('end',"**Message box answer $messageBoxAnswer was no\n");
+			my @shortVMFileNames;
+			foreach(@VMsToImage)
+			{
+				push @shortVMFileNames, "\n" .  getFileName($_);
+			}
+			my $messageBoxAnswer = $mw->messageBox(-title => "Test", -type => "YesNo", -icon => "question", -message => "Would you like to image the following VMs files?: @shortVMFileNames", -default => "yes");
+			$consoleLog->insert('end',"**Message box answer: --$messageBoxAnswer--\n");
+			$consoleLog->see('end');
+			if ($messageBoxAnswer eq 'Yes')
+			{
+				$consoleLog->insert('end',"**Message box answer $messageBoxAnswer was yes\n");
+				foreach(@VMsToImage)
+				{
+					$consoleLog->insert('end',"Working on $_\n");
+					$consoleLog->see('end');
+					#my $targetImageFile = ddTargetFile($_, getFileName($_));
+					my $targetImageFile = ddTargetFile($_);
+					#print "Going to SFTP $targetImageFile to this computer\n";
+					my $ip = $ESXip->get;
+					$consoleLog->insert('end',"Going to SFTP $targetImageFile to this computer from esxi server at IP $ip\n");
+					$consoleLog->see('end');
+					$mw->update;
+					sftpTargetFileImage($targetImageFile);
+				}
+				#Maybe add more info to the "done" window
+				my $message = $mw->MsgBox(-title => "Info", -type => "ok", -icon => "info", -message => "Done!\n");
+				$message->Show;
+				#Return the vm selection window to what it was origionally in case user wants to image more VMs
+				findVMs();
+			}
+			else
+			{
+				$consoleLog->insert('end',"**Message box answer $messageBoxAnswer was no\n");
+			}
 		}
 	}
 }
 
-#DD target VMs, expects the absolute path and the filename 
+#Step 4: DD target VMs, expects the absolute path to the vm file on ESXi server
 sub ddTargetFile
 {
-
 	#!!check to see if ddimages directory exists!! figure out later
 	#print "\n\n---------------------------\nCreating DD copy of target file\n";
 	my $absolutePathFileToDD = $_[0];
-	my $fileToDD = $_[1];
-	my $fileToDDDestinationName  = $fileToDD;
+	#my $fileToDD = $_[1];
+	#my $fileToDDDestinationName  = $fileToDD;
 	#This was a much easier solution to determining where to dd the file to
 	my $ddDestination = $absolutePathFileToDD . ".dd";
 	#$fileToDDDestinationName =~ s/vmx/dd/;
@@ -354,51 +485,106 @@ sub ddTargetFile
 
 #print "dd dest $ddDestination\n";
 #my $s=<STDIN>;
+	
+	#determine file size of file we are about to acquire
+	my $fileSize = $ssh->capture("ls -lah $absolutePathFileToDD");
+	$fileSize = returnFileSize($fileSize);
+	my $subWindow = $mw->Toplevel;
+	$subWindow->title("Size");
+	
+	########debugging window position stuff 
+	my $mwx = $mw->x;
+	my $mwy = $mw->y;
+	my $mwHeight = $mw->height;
+	my $mwWidth = $mw->width;
+	my $swHeight = $subWindow->height;
+	my $swWidth = $subWindow->width;
+	
+	$consoleLog->insert('end',"mwx=$mwx \nmwy=$mwy \nmwHeight=$mwHeight \nmwWidth=$mwWidth \nsubWindowHeight=$swHeight \nsubWindowWidth=$swWidth");
+	$consoleLog->see('end');
+	###########debugging window position stuff 
+	
+	#Adjusts the sub window to appear in the middle of the main window
+	my $xpos = int((($mw->width - $subWindow->width) / 2) + $mw->x);
+	my $ypos = int((($mw->height - $subWindow->height) / 2) + $mw->y);
+	$subWindow->geometry("+$xpos+$ypos");
+	 # Center window
+	#my $xpos = int(($subWindow->screenwidth  - $subWindow->width ) / 2);
+	#my $ypos = int(($subWindow->screenheight - $subWindow->height) / 2);
+	
+	#Tells the user what is happening b/c they will not have control until they get to the SFTP step
+	$subWindow->Label(-text => "File: $absolutePathFileToDD\nSize: $fileSize\nCalculating MD5 and SHA1 hashes for $absolutePathFileToDD...\nThis may take some time depending on the file size, please be patient\n")->pack;
+	$mw->update;
+
+	sleep(1);
+	
 	my $md5 = calculateMD5HashOnESX($absolutePathFileToDD);
 	my $sha1 = calculateSHA1HashOnESX($absolutePathFileToDD);
 
+	#Done telling the user some info, destroy the sub window b/c we are about to create a new one with new info
+	$subWindow->destroy();
+	
 	#print "Hashes Before DD:\n \tMD5: $md5\n \tSHA1: $sha1\n";
 	$consoleLog->insert('end',"Hashes Before DD:\n \tMD5: $md5\n \tSHA1: $sha1\n");
+	$consoleLog->see('end');
 	$mw->update;
 	sleep(1);
 
+	my $subWindow = $mw->Toplevel;
+	$subWindow->title("Size");
+	
+	#Dont need to recalculate window position again b/c the main window should not have been moved. Just using values calculated from above
+	$subWindow->geometry("+$xpos+$ypos");
+	
+	$subWindow->Label(-text => "File: $absolutePathFileToDD\nSize: $fileSize\nCreating a copy of $absolutePathFileToDD with DD...\nThis may take some time depending on thefile size, please be patient\n")->pack;
+	$mw->update;
+	
+	sleep(5);
+	
 	my $stdout = $ssh->capture("dd if=$absolutePathFileToDD of=$ddDestination");
+	
+	$subWindow->destroy();
 	
 	my $pathToHash = $ddDestination;
 	my $md5Check = calculateMD5HashOnESX($pathToHash);
 	my $sha1Check = calculateSHA1HashOnESX($pathToHash);
 	#print "Hashes After DD:\n \tMD5: $md5Check\n \tSHA1: $sha1Check\n";
 	$consoleLog->insert('end',"Hashes After DD:\n \tMD5: $md5Check\n \tSHA1: $sha1Check\n");
+	$consoleLog->see('end');
 	$mw->update;
 	sleep(1);
 	return $pathToHash;
 
 }
 
-#SFTP target VMs, expects esxi server IP and absolute path to target dd file
+#Step 5: SFTP target VMs, expects absolute path to target dd file
 sub sftpTargetFileImage
 {
-	my $serverIP = $_[0];
-	my $fileToSFTP = $_[1];
+	#my $serverIP = $_[0];
+	my $fileToSFTP = $_[0];
 
 	my %args; #= ( user => 'root',password => 'netsys01');
-
+	my $serverIP = $ESXip->get;
 	my $user = $username->get;
 	#$consoleLog->insert('end', "$user\n");
 	my $password = $password->get;
 	my $host= '192.168.100.141';
 	$consoleLog->insert('end', "Going to connect to $serverIP with credeitials $user and $password\n");
+	$consoleLog->see('end');
 	$mw->update;
 	my $sftp = Net::SFTP::Foreign->new($serverIP,  user => $user, password => $password);
 	$sftp->die_on_error("SSH Connection Failed");
 	
-	my @filePathParts2 = split('/', $fileToSFTP);
-	my $getFileName2 = pop(@filePathParts2);
+	
+	my $getFileName2 = getFileName($fileToSFTP);
+	#my @filePathParts2 = split('/', $fileToSFTP);
+	#my $getFileName2 = pop(@filePathParts2);
 	
 	#Now that we have a cases directory, the images need to be saved to that directory
 	#my $localDestination = "/home/matt/Desktop/" . $getFileName2;
 	my $localDestination = $currentCaseLocation . "/" . $getFileName2;
 	$consoleLog->insert('end', "Transfering file from:$fileToSFTP to:$localDestination\n");
+	$consoleLog->see('end');
 	$mw->update;
 
 	#print "This file will SFTP from $fileToSFTP to $localDestination\n";
@@ -409,23 +595,71 @@ sub sftpTargetFileImage
 	my $subWindow = $mw->Toplevel;
 	$subWindow->title("Transfering Image");
 	$subWindow->geometry("300x30");
+	
+	my $xpos = int((($mw->width - $subWindow->width) / 2) + $mw->x);
+	my $ypos = int((($mw->height - $subWindow->height) / 2) + $mw->y);
+	$subWindow->geometry("+$xpos+$ypos");
+	 # Center window
+	#my $xpos = int(($subWindow->screenwidth  - $subWindow->width ) / 2);
+	#my $ypos = int(($subWindow->screenheight - $subWindow->height) / 2);
+	
 	my $progressBar = $subWindow->ProgressBar(-width => 30, -blocks => 50, -from => 0, -to => 100, -variable => \$percentDone)->pack(-fill => 'x');
 	
 	$sftp->get($fileToSFTP,$localDestination, callback => sub {
 		my ($sftp, $data, $offset, $size) = @_;
-		print "$offset of $size bytes read\n";
+		#print "$offset of $size bytes read\n";
 		$percentDone = ($offset / $size) * 100;
 		$subWindow->update;
 	
 	}); #or die "File transfer failed\n";
 	$subWindow->destroy;
 	#With transfer complete, destroy the progress bar window
+	sleep(2);
+	
+	#get the file size locally
+	my $fileSize = `ls -lah $localDestination`;
+	$fileSize = returnFileSize($fileSize);
+	
+	#Create subwindow to tell use the program is calculating hashes
+	my $subWindow = $mw->Toplevel;
+	$subWindow->title("Size");
+	#Adjusts the sub window to appear in the middle of the main window
+	my $xpos = int((($mw->width - $subWindow->width) / 2) + $mw->x);
+	my $ypos = int((($mw->height - $subWindow->height) / 2) + $mw->y);
+	$subWindow->geometry("+$xpos+$ypos");
+	
+	#Tells the user what is happening b/c they will not have control while hashes are being calculated
+	$subWindow->Label(-text => "File: $localDestination\nSize: $fileSize\nCalculating MD5 and SHA1 hashes for $localDestination...\nThis may take some time depending on the file size, please be patient\n")->pack;
+	$mw->update;
 	
 	my $md5Check = calculateMD5HashLocal($localDestination);
 	my $sha1Check = calculateSHA1HashLocal($localDestination);
 	#print "Hashes After DD:\n \tMD5: $md5Check\n \tSHA1: $sha1Check\n";
 	$consoleLog->insert('end',"Hashes After DD:\n \tMD5: $md5Check\n \tSHA1: $sha1Check\n");
+	$consoleLog->see('end');
 	sleep(1);
+	
+	cleanup($fileToSFTP);
+}
+
+#because the dd images are being stored into the same directory the file exists in on the ESXi server, we want to clean up these files when we are done
+#expects the absolute path of the file to delete on the esxi server and will also check that the file has a .dd extension so the wrong file does not get deleted which would be very bad
+#ideally dd would "store" copies somewhere else but this is how I have it setup for now
+sub cleanup
+{
+	my $fileToDel = $_[0];
+	if ($fileToDel =~ m/.+\.dd$/)
+	{
+		print "Going to delete file $fileToDel\n";
+		my $stdout = $ssh->capture("rm -f $fileToDel");
+		print "STDOUT: $stdout ...Done!\n";
+		$consoleLog->see('end');
+	}
+	else
+	{
+		print "File ($fileToDel) does not have a .dd extension, will not delete this file\n";
+		$consoleLog->see('end');
+	}
 }
 
 #Allows user to edit settings of program. Location where cases, log files, etc are stored. Maybe additional configurable options later
@@ -463,6 +697,7 @@ sub editSettings
 			else
 			{
 				$consoleLog->insert('end', "Misformated Config file, dont know what $_ is\n");
+				$consoleLog->see('end');
 			}
 		}
 		close(CONFIGFILE);
@@ -515,6 +750,7 @@ sub editSettings
 		print CONFIGFILE "LogFile=$logFileDestination\n";
 		close(CONFIGFILE);
 		$consoleLog->insert('end', "Config File Saved\n");
+		$consoleLog->see('end');
 	})->pack(-side => "left");	
 	my $cancelButton = $settingsWindowBottomFrame->Button(-text => "Exit", -command => [$settingsWindow => 'destroy'])->pack(-side => "left");
 }
@@ -554,6 +790,7 @@ sub createNewCase
 				mkdir ($newCaseDirPath, 0755);
 				$currentCaseLocation = $newCaseDirPath;
 				$consoleLog->insert('end', "Created new case: $currentCaseName Location: $currentCaseLocation\n");
+				$consoleLog->see('end');
 				$caseLabel->configure(-text => "Current Case: $currentCaseName Location: $currentCaseLocation");
 				#$dirTreeLabel->configure(-text => "Directory listing of open case:\n");
 				#my $dirTree = $dirTreeFrame->DirTree(-directory => $currentCaseLocation)->pack;
@@ -574,9 +811,10 @@ sub openExistingCase
 	my $directory = $mw->chooseDirectory(-initialdir=>$ESXiCasesDir, -title => "Select a case to open");
 	$currentCaseLocation = $directory;
 	$currentCaseName = getFileName($currentCaseLocation);
-	my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "current case name: --$currentCaseName-- dir: --$currentCaseLocation--n");
-		$message->Show;
+	##my $message = $mw->MsgBox(-title => "Error", -type => "ok", -icon => "error", -message => "current case name: --$currentCaseName-- dir: --$currentCaseLocation--n");
+		##$message->Show;
 	$consoleLog->insert('end', "Opened an existing case: $currentCaseName Location: $currentCaseLocation\n");
+	$consoleLog->see('end');
 	$caseLabel->configure(-text => "Current Case: $currentCaseName Location: $currentCaseLocation");
 	#$dirTreeLabel->configure(-text => "Directory listing of open case:\n");
 	#my $dirTree = $dirTreeFrame->DirTree(-directory => $currentCaseLocation)->pack;
@@ -584,9 +822,43 @@ sub openExistingCase
 	listFiles($currentCaseLocation);
 	$mw->update;
 }
+
+#given a directory path, will list all the files in given directory into the $fileList listbox next to the dirTree
+sub listFiles
+{
+	my $path = $_[0];
+	#deletes all the entries in the listbox before populating it
+	$fileList->delete(0,'end');
+	
+	opendir (DIR, $path);
+	$fileList->insert('end', $path);
+	$fileList->insert('end', "----------------------------------------------------------");
+	while (my $file = readdir(DIR))
+	{
+		next if $file =~ /^[.]/;
+		if (-f $file)
+		{
+			$fileList->insert('end', "its a fiole\n");
+		}
+		else
+		{$fileList->insert('end', $file);}
+	}
+	closedir(DIR);
+}
+
+
 #***********************************************************************************************************************************#
 #******Start of Commonly Used Subs to Make Life Better******************************************************************************#
 #***********************************************************************************************************************************#
+
+#Given the output of ls -lah of a single file, returns the file size, *nix systems only
+sub returnFileSize
+{
+	my $output = $_[0];
+	my @split = split(/\s+/, $output);
+	
+	return $split[4];
+}
 
 #Sub is passed long absolute path of a file and returns the file name and extenstion
 #ex. sub is passed /var/storage/foo/bar.vmx and returns bar.vmx
@@ -600,6 +872,30 @@ sub getFileName
 	return $fileName;
 }
 
+#Sub is passed long absolute path of a file and returns the files parent directory
+#ex. sub is passed /var/storage/foo/bar.vmx and returns /var/storage/foo/
+sub getDirName
+{
+	my $absolutePath = $_[0];
+
+	$consoleLog->insert('end',"Got this: $absolutePath\n");
+	$consoleLog->see('end');
+	my @fileNameParts = split('/',$absolutePath);
+	#Becasue there is a leading / in the path we need to get rid of the first element in the array becasue it is nothing. print "--$_--" = ----
+	shift @fileNameParts;
+	pop @fileNameParts;
+	
+	my $parentDirPath;
+	foreach(@fileNameParts)
+	{
+		$parentDirPath = $parentDirPath . "/" . $_;
+	}
+	$parentDirPath = $parentDirPath . "/";
+	$consoleLog->insert('end',"Returning This:  $parentDirPath\n");
+	$consoleLog->see('end');
+	return $parentDirPath;
+}
+
 #Calculate MD5 hash of file about to be copied on ESX server
 sub calculateMD5HashOnESX
 {
@@ -607,9 +903,11 @@ sub calculateMD5HashOnESX
 	
 	#print "*Calculating md5 hash this may take a while be patient...";
 	$consoleLog->insert('end',"*Calculating md5 hash this may take a while be patient...");
+	$consoleLog->see('end');
 	my $stdout = $ssh->capture("md5sum $fileToHash");
 	#print "done!\n";
 	$consoleLog->insert('end',"done!\n");
+	$consoleLog->see('end');
 	chomp $stdout;
 	return $stdout;   
 }
@@ -621,9 +919,11 @@ sub calculateSHA1HashOnESX
 	
 	#print "*Calculating sha1 hash this may take a while be patient...";
 	$consoleLog->insert('end',"Calculating sha1 hash this may take a while be patient...");
+	$consoleLog->see('end');
 	my $stdout = $ssh->capture("sha1sum $fileToHash");
 	#print "done!\n";
 	$consoleLog->insert('end',"done!\n");
+	$consoleLog->see('end');
 	chomp $stdout;
 	return $stdout;   
 }
@@ -636,12 +936,16 @@ sub calculateMD5HashLocal
 	
 	#print "*Calculating md5 hash this may take a while be patient...";
 	$consoleLog->insert('end',"*Calculating md5 hash this may take a while be patient...");
+	$consoleLog->see('end');
 	my $stdout = `md5sum $fileToHash` if $operatingSystem == 1;
-	my $stdout = `md5 $fileToHash` if $operatingSystem == 2;
+	$stdout = `md5 $fileToHash` if $operatingSystem == 2;
 	
 	my @split = split (/\s+/, $stdout);
 	#print "$split[$#split]\n" if $operatingSystem == 2;
 	#print "$split[0]\n" if $operatingSystem == 1;
+	
+	$consoleLog->insert('end',"\nRaw: @split\n");
+	$consoleLog->see('end');
 	
 	#[$#split] gives you the last element of an array
 	$stdout = $split[0] if $operatingSystem == 1;
@@ -650,6 +954,7 @@ sub calculateMD5HashLocal
 	#$stdout = $ssh->capture("md5sum $fileToHash");
 	#print "done!\n";
 	$consoleLog->insert('end',"done!\n");
+	$consoleLog->see('end');
 	chomp $stdout;
 	return $stdout;   
 }
@@ -662,8 +967,9 @@ sub calculateSHA1HashLocal
 	
 	#print "*Calculating sha1 hash this may take a while be patient...";
 	$consoleLog->insert('end',"*Calculating sha1 hash this may take a while be patient...");
+	$consoleLog->see('end');
 	my $stdout = `sha1sum $fileToHash` if $operatingSystem == 1;
-	my $stdout = `shasum $fileToHash` if $operatingSystem == 2;
+	$stdout = `shasum $fileToHash` if $operatingSystem == 2;
 	
 	#shasum on osx has same output as linux sha1sum
 	my @split = split (/\s+/, $stdout);
@@ -678,6 +984,7 @@ sub calculateSHA1HashLocal
 	#$stdout = $ssh->capture("sha1sum $fileToHash");
 	#print "done!\n";
 	$consoleLog->insert('end',"done!\n");
+	$consoleLog->see('end');
 	chomp $stdout;
 	return $stdout;   
 }
@@ -709,43 +1016,9 @@ sub checkOS
 	}
 	return $osValue;
 }
-
-#given a directory path, will list all the files in given directory into the $fileList listbox next to the dirTree
-sub listFiles
-{
-	my $path = $_[0];
-	#deletes all the entries in the listbox before populating it
-	$fileList->delete(0,'end');
-	
-	opendir (DIR, $path);
-	$fileList->insert('end', $path);
-	$fileList->insert('end', "----------------------------------------------------------");
-	while (my $file = readdir(DIR))
-	{
-		next if $file =~ /^[.]/;
-		if (-f $file)
-		{
-			$fileList->insert('end', "its a fiole\n");
-		}
-		else
-		{$fileList->insert('end', $file);}
-	}
-	closedir(DIR);
-}
-
-
 #***********************************************************************************************************************************#
 #******End of Commonly Used Subs to Make Life Better********************************************************************************#
 #***********************************************************************************************************************************#
-
-# # # sub
-# # # {
-	# # # foreach(@checkButtonValues)
-	# # # {
-		# # # $consoleLog->insert('end', "$_\n");
-	# # # }
-	
-# # # }
 
 sub foo
 {
