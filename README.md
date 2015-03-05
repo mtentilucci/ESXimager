@@ -9,7 +9,7 @@ While this entire process can be done manually, why not write a tool to do it fo
 At the end of the imaging process, you end up with a RAW image in a .dd format which can then be loaded into a computer forensics program for analysis. 
 
 ## About Me
-I am not a programmer. I am a security engineere, sys/net admin at heart. Perl is my go to language and I consider myself to be an intermediate to advanced user, but by no means an expert. Did I make some programming no-no's in this code, maybe. Could it be witten better and more efficiently, probably.  But that is why this is open source. My hope is that others will contribute to make this tool even better. 
+I am not a programmer. I am a security engineer, sys/net admin at heart. Perl is my go to language and I consider myself to be an intermediate to advanced user, but by no means an expert. Did I make some programming no-no's in this code, maybe. Could it be written better and more efficiently, probably.  But that is why this is open source. My hope is that others will contribute to make this tool even better. 
 
 ## License
-This program is licenced under the Artistic License 2.0 see the LICENSE file. 
+This program is licensed under the Artistic License 2.0 see the LICENSE file.
