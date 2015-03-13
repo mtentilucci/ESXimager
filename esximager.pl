@@ -16,7 +16,7 @@ use Time::HiRes;
 #ESXimager2.9.pl
 #Matt Tentilucci	
 #mjt5206@psu.edu
-#3-4-2014
+#3-4-2015
 ########################
 
 #Before the config file is read and the desired log file location is determined, I want to log debug messages so I will utilize this array
