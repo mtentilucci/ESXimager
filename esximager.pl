@@ -86,15 +86,15 @@ $connectionFrame->pack;#(-side => 'left', -anchor => 'nw');
 #label for IP
 $connectionFrame->Label(-text => "Server IP")->pack(-side => 'left', -anchor => 'n');
 #entry for IP
-my $ESXip = $connectionFrame->Entry( -width => 20, -text => "192.168.100.142")->pack(-side => 'left', -anchor => 'n');
+my $ESXip = $connectionFrame->Entry( -width => 20, -text => "")->pack(-side => 'left', -anchor => 'n');
 #Label for user
 $connectionFrame->Label(-text => "Username")->pack(-side => 'left', -anchor => 'n');
 #entry for user
-my $username = $connectionFrame->Entry( -width => 20,  -text => "root")->pack(-side => 'left', -anchor => 'n');
+my $username = $connectionFrame->Entry( -width => 20,  -text => "")->pack(-side => 'left', -anchor => 'n');
 #label for pass
 $connectionFrame->Label(-text => "Password")->pack(-side => 'left', -anchor => 'n');
 #entry for pass
-my $password = $connectionFrame->Entry( -width => 20, -show => "*",  -text => "netsys01")->pack(-side => 'left', -anchor => 'n');
+my $password = $connectionFrame->Entry( -width => 20, -show => "*",  -text => "")->pack(-side => 'left', -anchor => 'n');
 #connect button, first calls sub to do input sanitization and checking on ip, username, and password boxes then 
 #either falls out with an error, or another sub is called to connect to the ESXi server
 $connectionFrame->Button(-text => "Connect", -command => \&sanitizeInputs )->pack(-side => 'left', -anchor => 'n');	
