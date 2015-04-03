@@ -22,7 +22,7 @@ use Time::HiRes;
 #Before the config file is read and the desired log file location is determined, I want to log debug messages so I will utilize this array
 my @debugMessages;
 push @debugMessages, logIt("[debug] (main) Program opened.",0,0,0,0);
-push @debugMessages, logIt("[debug] (main) Initilizing some variables.",0,0,0,0);
+push @debugMessages, logIt("[debug] (main) Initializing some variables.",0,0,0,0);
 #variable so ssh session to esxi can be accessible outside of sub
 my $ssh;
 my $checkFrame1;
@@ -31,7 +31,7 @@ my $buttonFrame1;
 my $buttonFrame2;
 #used for storing the data structure of the case integrity file
 my $hashRef;
-#hash ref used to save hashes of a file as it is being imaged. This will be added into $hasRef and reset once a praticular file has been imaged
+#hash ref used to save hashes of a file as it is being imaged. This will be added into $hasRef and reset once a particular file has been imaged
 my $processingHashRef;
 my $preMD5;
 my $preSHA1;
@@ -46,7 +46,7 @@ my $currentCaseLocation;
 my $currentCaseLog;
 my $currentCaseIntegrityFile;
 
-push @debugMessages, logIt("[debug] (main) Done initilizing variables.",0,0,0,0);
+push @debugMessages, logIt("[debug] (main) Done initializing variables.",0,0,0,0);
 
 #Creates main window
 my $mw = MainWindow->new;
@@ -161,7 +161,7 @@ open (PROGRAMLOGFILE, ">>$logFileDestination");
   $| = 1;
   select $ofh;
 }
-logIt("[info] (main) Initilized... GREETINGS PROFESSOR FALKEN.", 1, 0, 1);
+logIt("[info] (main) Initialized... GREETINGS PROFESSOR FALKEN.", 1, 0, 1);
 
 #Reads the configuration file for this program. It looks in /home/user/ESXimager/ESXimager.cfg
 #If it does not find a config file it will prompt the user to create one, bringing them to the 
@@ -220,14 +220,14 @@ sub readConfigFile
 	}
 }
 
-#sanatizes and checks inputs with connect button is clicked, then presents and error or 
+#sanitizes and checks inputs with connect button is clicked, then presents and error or 
 #calls another sub to connect to the ESXi server
 sub sanitizeInputs
 {
 	my $ip = $ESXip->get;
 	my $user = $username->get;
 	my $password = $password->get;
-	logIt("[info] (main) Sanatizing inputs...", 1, 0, 1);
+	logIt("[info] (main) Sanitizing inputs...", 1, 0, 1);
 
 	my $validInput = 0;
 	
@@ -262,7 +262,7 @@ sub sanitizeInputs
 	#Calls sub to connect only if input validation has passed
 	if($validInput == 3)
 	{
-		logIt("[info] (main) Done sanatizing inputs.", 1, 0, 1);
+		logIt("[info] (main) Done sanitizing inputs.", 1, 0, 1);
 		sshToESXi($ip, $user, $password)
 	}
 }
@@ -279,7 +279,7 @@ sub sshToESXi
 	$ssh = Net::OpenSSH->new("$user:$password\@$ip", master_opts => [ -o => "StrictHostKeyChecking=no"]);
 	if(!$ssh->error)
 	{
-		logIt("[info] (main) Succesfully connected to $ip", 1, 0, 1);
+		logIt("[info] (main) Successfully connected to $ip", 1, 0, 1);
 		$mw->update;
 		#Are all vm's stored here? Investigate what path is used for each esxi host for iscsi or VMs on a SAN
 		findVMs("/vmfs/volumes/", $ip);
@@ -336,7 +336,7 @@ sub findVMs
 	my $okButton = $buttonFrame1->Button(-text => 'Next', -command => [\&selectVMFiles, \@checkButtonValues])->pack(-side => "left");
 }
 
-#Step 2: $checkFrame2 and $checkFrame2 - destroys the frames from the findVMs sub and replaces them with files assiciated with the VMs they want to image.
+#Step 2: $checkFrame2 and $checkFrame2 - destroys the frames from the findVMs sub and replaces them with files associated with the VMs they want to image.
 #Asks the user what files they want to acquire, .vmx .vmdk .vmem etc.....
 sub selectVMFiles
 {
@@ -420,8 +420,8 @@ sub selectVMFiles
 	}
 }
 
-#Step 3: Confirms the users choices for which VMs they wish to acquire, expects a refrence to the array of checkButton choices as well as a 
-#refrence to the array of VMs that need to be restarted once imaging is complete
+#Step 3: Confirms the users choices for which VMs they wish to acquire, expects a reference to the array of checkButton choices as well as a 
+#reference to the array of VMs that need to be restarted once imaging is complete
 sub confirmUserVMImageChoices
 {
 	if($currentCaseName =~ m/No Case Opened Yet/)
@@ -468,7 +468,7 @@ sub confirmUserVMImageChoices
 				foreach(@VMsToImage)
 				{
 					#delete whatever is currently in the processing hash ref 
-					#we want to only have hash values for a praticular file  
+					#we want to only have hash values for a particular file  
 					$processingHashRef = {};
 					for (keys %$processingHashRef)
 					{
@@ -496,7 +496,7 @@ sub confirmUserVMImageChoices
 				{
 					startVM($_);
 				}
-				#After imaging is complete, we want to write our $hashRef data scructure containing all the hash history to the case integrity file
+				#After imaging is complete, we want to write our $hashRef data structure containing all the hash history to the case integrity file
 				my $caseIntegrityFileLocation = $currentCaseLocation . "/" . $currentCaseName . ".integrity";
 				open ($currentCaseIntegrityFile, ">$caseIntegrityFileLocation");
 				logIt("[info] ($currentCaseName) Writing to integrity file", 1, 1, 1);
@@ -511,7 +511,7 @@ sub confirmUserVMImageChoices
 				
 				my $message = $mw->MsgBox(-title => "Info", -type => "ok", -icon => "info", -message => "\tDone!\nImaging process took $outputTime seconds\n");
 				$message->Show;
-				#Return the vm selection window to what it was origionally in case user wants to image more VMs
+				#Return the vm selection window to what it was originally in case user wants to image more VMs
 				findVMs("/vmfs/volumes/");
 			}
 			else
@@ -565,7 +565,7 @@ sub ddTargetFile
 	my $outputTime = $endTime - $startTime;
 	chomp ($outputTime);
 	$subWindow->Label(-text => "MD5 calculation took: $outputTime seconds\n")->pack;
-	logIt("[info] ($currentCaseName) MD5 calcualtion of file $absolutePathFileToDD took $outputTime seconds", 1, 1, 1);
+	logIt("[info] ($currentCaseName) MD5 calculation of file $absolutePathFileToDD took $outputTime seconds", 1, 1, 1);
 	
 	#Try and give some idea when program is calculating each hash
 	$subWindow->title("(Step 1/5) Calculating MD5 and *SHA1* Hashes");
@@ -579,7 +579,7 @@ sub ddTargetFile
 	$outputTime = $endTime - $startTime;
 	chomp ($outputTime);
 	$subWindow->Label(-text => "SHA1 calculation took: $outputTime seconds\n")->pack;
-	logIt("[info] ($currentCaseName) SHA1 calcualtion of file $absolutePathFileToDD took $outputTime seconds", 1, 1, 1);
+	logIt("[info] ($currentCaseName) SHA1 calculation of file $absolutePathFileToDD took $outputTime seconds", 1, 1, 1);
 	
 	#Done telling the user some info, destroy the sub window b/c we are about to create a new one with new info
 	$subWindow->destroy();
@@ -599,7 +599,7 @@ sub ddTargetFile
 	$subWindow->Label(-text => "File: $absolutePathFileToDD\nSize: $fileSize\nCreating a copy of $absolutePathFileToDD with DD...\nThis may take some time depending on thefile size, please be patient\n")->pack;
 	$mw->update;
 	
-	logIt("[info] ($currentCaseName) Begining DD of file: $absolutePathFileToDD Destination: $ddDestination", 1, 1, 1);
+	logIt("[info] ($currentCaseName) Beginning DD of file: $absolutePathFileToDD Destination: $ddDestination", 1, 1, 1);
 
 	sleep(5);
 	
@@ -636,7 +636,7 @@ sub ddTargetFile
 	$outputTime = $endTime - $startTime;
 	chomp ($outputTime);
 	$subWindow->Label(-text => "MD5 calculation took: $outputTime seconds\n")->pack;
-	logIt("[info] ($currentCaseName) MD5 calcualtion of file $pathToHash took $outputTime seconds", 1, 1, 1);
+	logIt("[info] ($currentCaseName) MD5 calculation of file $pathToHash took $outputTime seconds", 1, 1, 1);
 	
 	#Try and give some idea when program is calculating each hash
 	$subWindow->title("(Step 3/5) Calculating MD5 and *SHA1* hashes after DD");
@@ -650,7 +650,7 @@ sub ddTargetFile
 	$outputTime = $endTime - $startTime;
 	chomp ($outputTime);
 	$subWindow->Label(-text => "SHA1 calculation took: $outputTime seconds\n")->pack;
-	logIt("[info] ($currentCaseName) SHA1 calcualtion of file $pathToHash took $outputTime seconds", 1, 1, 1);
+	logIt("[info] ($currentCaseName) SHA1 calculation of file $pathToHash took $outputTime seconds", 1, 1, 1);
 	
 	$preMD5 = $md5Check;
 	$preSHA1 = $sha1Check;
@@ -690,13 +690,13 @@ sub sftpTargetFileImage
 	
 	#Now that we have a cases directory, the images need to be saved to that directory
 	my $localDestination = $currentCaseLocation . "/" . $getFileName2;
-	logIt("[info] ($currentCaseName) Transfering $fileToSFTP from ESXi server to this computer. Local Destination:$localDestination", 1, 1, 1);
+	logIt("[info] ($currentCaseName) Transferring $fileToSFTP from ESXi server to this computer. Local Destination:$localDestination", 1, 1, 1);
 	$mw->update;
 
 	#Create progress bar to show user program is doing something
 	my $percentDone = 0;
 	my $subWindow = $mw->Toplevel;
-	$subWindow->title("(Step 4/5) Transfering image to local computer via SFTP");
+	$subWindow->title("(Step 4/5) Transferring image to local computer via SFTP");
 	my $startTime = time();
 	$subWindow->geometry("300x30");
 	
@@ -748,7 +748,7 @@ sub sftpTargetFileImage
 	$outputTime = $endTime - $startTime;
 	chomp ($outputTime);
 	$subWindow->Label(-text => "MD5 calculation took: $outputTime seconds\n")->pack;
-	logIt("[info] ($currentCaseName) MD5 calcualtion of file $localDestination took $outputTime seconds", 1, 1, 1);
+	logIt("[info] ($currentCaseName) MD5 calculation of file $localDestination took $outputTime seconds", 1, 1, 1);
 	
 	#Try and give some idea when program is calculating each hash
 	$subWindow->title("(Step 5/5) Calculating MD5 and *SHA1* hashes after SFTP transfer");
@@ -762,7 +762,7 @@ sub sftpTargetFileImage
 	$outputTime = $endTime - $startTime;
 	chomp ($outputTime);
 	$subWindow->Label(-text => "SHA1 calculation took: $outputTime seconds\n")->pack;
-	logIt("[info] ($currentCaseName) SHA1 calcualtion of file $localDestination took $outputTime seconds", 1, 1, 1);
+	logIt("[info] ($currentCaseName) SHA1 calculation of file $localDestination took $outputTime seconds", 1, 1, 1);
 	
 	logIt("[info] ($currentCaseName) Hashes of $localDestination After SFTP Transfer:\n \tMD5: $md5Check\n \tSHA1: $sha1Check", 1, 1, 1);
 	$processingHashRef->{getLoggingTime() . " After SFTP transfer MD5"} = $md5Check;
@@ -787,7 +787,7 @@ sub sftpTargetFileImage
 	cleanup($fileToSFTP);
 }
 
-#Checks the integrity of all the files currently in the given case integrity file, or checks a subset of files if an array refrence containing
+#Checks the integrity of all the files currently in the given case integrity file, or checks a subset of files if an array reference containing
 #the file names to be checked is passed to the sub
 sub checkImageIntegrity
 {
@@ -840,7 +840,7 @@ sub checkImageIntegrity
 				my $outputTime = $endTime - $startTime;
 				chomp ($outputTime);
 				$subWindow->Label(-text => "MD5 calculation took: $outputTime seconds\n")->pack;
-				logIt("[info] ($currentCaseName) MD5 calcualtion of file $absolutePath took $outputTime seconds", 1, 1, 1);
+				logIt("[info] ($currentCaseName) MD5 calculation of file $absolutePath took $outputTime seconds", 1, 1, 1);
 				
 				#Try and give some idea when program is calculating each hash
 				$subWindow->title("Calculating MD5 and *SHA1* Hashes for Image Integrity Verification");
@@ -854,7 +854,7 @@ sub checkImageIntegrity
 				$outputTime = $endTime - $startTime;
 				chomp ($outputTime);
 				$subWindow->Label(-text => "SHA1 calculation took: $outputTime seconds\n")->pack;
-				logIt("[info] ($currentCaseName) SHA1 calcualtion of file $absolutePath took $outputTime seconds", 1, 1, 1);
+				logIt("[info] ($currentCaseName) SHA1 calculation of file $absolutePath took $outputTime seconds", 1, 1, 1);
 				
 				#Done telling the user some info, destroy the sub window b/c we are about to create a new one with new info
 				$subWindow->destroy();
@@ -1146,7 +1146,7 @@ sub cleanup
 }
 
 #Allows user to edit settings of program. Location where cases, log files, etc are stored. Maybe additional configurable options later
-#Will be run from the Tools->Setttings menu bar or run from the readConfigFile sub if no configuration file is found
+#Will be run from the Tools->Settings menu bar or run from the readConfigFile sub if no configuration file is found
 sub editSettings
 {
 	if (-e $configFileLocation)
@@ -1235,7 +1235,7 @@ sub editSettings
 	my $cancelButton = $settingsWindowBottomFrame->Button(-text => "Exit", -command => [$settingsWindow => 'destroy'])->pack(-side => "left");
 }
 
-#sub to create a new case, esentially all it does is create a directory under whatever $ESXiCasesDir is and updates the label in $mw
+#sub to create a new case, essentially all it does is create a directory under whatever $ESXiCasesDir is and updates the label in $mw
 sub createNewCase
 {
 	my $createCaseWindow = $mw->Toplevel;
@@ -1303,7 +1303,7 @@ sub createNewCase
 	my $cancelButton = $createCaseWindowBottomFrame->Button(-text => "Exit", -command => [$createCaseWindow => 'destroy'])->pack(-side => "left");
 }
 
-#Allows user to open existing case, brings up a popup direcoty navigation window to allow the user to select the case they want to open
+#Allows user to open existing case, brings up a popup directory navigation window to allow the user to select the case they want to open
 sub openExistingCase
 {
 	##More work to be done here
@@ -1363,13 +1363,13 @@ sub listFiles
 	closedir(DIR);
 }
 
-#Runs a selected file from the file listbox through the strings command and shows the output in a new window, expects a refrence to the $fileList listbox
+#Runs a selected file from the file listbox through the strings command and shows the output in a new window, expects a reference to the $fileList listbox
 sub runThroughStrings
 {
 	my $fileListBoxRef = $_[0];
-	#de-refrence
+	#de-reference
 	my $fileListBoxDeref = $$fileListBoxRef;
-	#curselection (cusor selection) returns an array in case multiple items are selected however, I only allow one item to be selected with this implementation -selectionmode?
+	#curselection (cursor selection) returns an array in case multiple items are selected however, I only allow one item to be selected with this implementation -selectionmode?
 	my @cursorSelection = $fileListBoxDeref->curselection;
 	#The current directory being listed is always shown at the top of the fileList listbox, this is element 0 of the listbox
 	my $currentDirectory = $fileListBoxDeref->get(0);
@@ -1407,13 +1407,13 @@ sub runThroughStrings
 	}
 }
 
-#Runs a selected file from the file listbox through the strings command and shows the output in a new window, expects a refrence to the $fileList listbox
+#Runs a selected file from the file listbox through the strings command and shows the output in a new window, expects a reference to the $fileList listbox
 sub runThroughHexdump
 {
 	my $fileListBoxRef = $_[0];
-	#de-refrence
+	#de-reference
 	my $fileListBoxDeref = $$fileListBoxRef;
-	#curselection (cusor selection) returns an array in case multiple items are selected however, I only allow one item to be selected with this implementation -selectionmode?
+	#curselection (cursor selection) returns an array in case multiple items are selected however, I only allow one item to be selected with this implementation -selectionmode?
 	my @cursorSelection = $fileListBoxDeref->curselection;	
 	#The current directory being listed is always shown at the top of the fileList listbox, this is element 0 of the listbox
 	my $currentDirectory = $fileListBoxDeref->get(0);
@@ -1447,9 +1447,9 @@ sub runThroughHexdump
 sub viewFileInfo
 {
 	my $fileListBoxRef = $_[0];
-	#de-refrence
+	#de-reference
 	my $fileListBoxDeref = $$fileListBoxRef;
-	#curselection (cusor selection) returns an array in case multiple items are selected however, I only allow one item to be selected with this implementation -selectionmode?
+	#curselection (cursor selection) returns an array in case multiple items are selected however, I only allow one item to be selected with this implementation -selectionmode?
 	my @cursorSelection = $fileListBoxDeref->curselection;	
 	#The current directory being listed is always shown at the top of the fileList listbox, this is element 0 of the listbox
 	my $currentDirectory = $fileListBoxDeref->get(0);
@@ -1504,7 +1504,7 @@ sub viewFileInfo
 #******Start of Commonly Used Subs to Make Life Better******************************************************************************#
 #***********************************************************************************************************************************#
 
-#simpflies logging. Will take what you want to print as an arguement and output to $consoleLog, the main program log, and the current case log
+#simplify logging. Will take what you want to print as an argument and output to $consoleLog, the main program log, and the current case log
 #Expects he exact message to be printed. ex. [info] (foo) case foo was opened
 #Also expects 4 values 0 or 1 to determine what to print out to (for whatever reason a message need to only be printed to one log file). Last value is
 # optional if they want debug messages to be printed. This solves a problem in the begining of the program where logIt is being run but the DEBUGLOGFILE 
@@ -1552,7 +1552,7 @@ sub returnFileSize
 	return $split[4];
 }
 
-#Sub is passed long absolute path of a file and returns the file name and extenstion
+#Sub is passed long absolute path of a file and returns the file name and extension
 #ex. sub is passed /var/storage/foo/bar.vmx and returns bar.vmx
 sub getFileName
 {
@@ -1570,7 +1570,7 @@ sub getDirName
 {
 	my $absolutePath = $_[0];
 	my @fileNameParts = split('/',$absolutePath);
-	#Becasue there is a leading / in the path we need to get rid of the first element in the array becasue it is nothing. print "--$_--" = ----
+	#Because there is a leading / in the path we need to get rid of the first element in the array becasue it is nothing. print "--$_--" = ----
 	shift @fileNameParts;
 	pop @fileNameParts;
 	
